@@ -15,25 +15,9 @@ claude   # 登录认证
 ```
 
 之后用户只需告诉 Claude Code：
-> Clone bytsm54/server-bootstrap 仓库，按 server-init 初始化服务器，然后安装所有 skills 并执行
+> Clone bytsm54/server-bootstrap 仓库，执行服务器初始化
 
-Claude Code 分三阶段自动完成：
-
-```
-Phase 1 — Server Init（此时无 Node.js）:
-  1. git clone https://github.com/bytsm54/server-bootstrap.git ~/server-bootstrap
-  2. 直接读取并执行 skills/server-init/SKILL.md
-     → hostname、timezone、Node.js、zsh 配置完成
-
-Phase 2 — 安装 Skills（Node.js 已可用）:
-  3. npx skills add bytsm54/server-bootstrap@server-init -g -y
-  4. npx skills add bytsm54/server-bootstrap@ssh-hardening -g -y
-  5. npx skills add bytsm54/server-bootstrap@claude-code-setup -g -y
-
-Phase 3 — 执行剩余 skills:
-  6. /ssh-hardening ssh_port=22022 allow_users=ubuntu
-  7. /claude-code-setup github_username=bytsm54 github_email=bytsm54@gmail.com
-```
+Claude Code 读取仓库根目录的 `SKILL.md`（编排器），自动按三阶段执行，中间会询问所需参数。
 
 ---
 
@@ -274,7 +258,10 @@ Phase 3 — 执行剩余 skills:
 
 ```
 server-bootstrap/                    # github.com/bytsm54/server-bootstrap (private)
+├── SKILL.md                         # 顶层编排器，控制三阶段执行顺序
 ├── README.md
+├── docs/
+│   └── design-spec.md
 ├── skills/
 │   ├── server-init/
 │   │   └── SKILL.md
@@ -296,17 +283,11 @@ server-bootstrap/                    # github.com/bytsm54/server-bootstrap (priv
   │    claude  (登录认证)
   │
   └── 用户对 Claude Code 说:
-       "Clone bytsm54/server-bootstrap，按 server-init 初始化，然后安装所有 skills 并执行"
+       "Clone bytsm54/server-bootstrap 仓库，执行服务器初始化"
        │
-       └── Claude Code 自动完成:
-            Phase 1 — 初始化（无 Node.js）:
-              1. git clone ~/server-bootstrap
-              2. 直接读取并执行 server-init/SKILL.md → 装好 Node.js
-            Phase 2 — 安装 Skills（Node.js 已可用）:
-              3. npx skills add bytsm54/server-bootstrap@server-init -g -y
-              4. npx skills add bytsm54/server-bootstrap@ssh-hardening -g -y
-              5. npx skills add bytsm54/server-bootstrap@claude-code-setup -g -y
-            Phase 3 — 执行剩余 skills:
-              6. /ssh-hardening ssh_port=22022 allow_users=ubuntu
-              7. /claude-code-setup github_username=bytsm54 github_email=bytsm54@gmail.com
+       └── Claude Code 读取根目录 SKILL.md，自动完成三阶段:
+            Phase 1: server-init（装 Node.js、hostname、zsh）
+            Phase 2: npx skills add 安装三个 skills
+            Phase 3: ssh-hardening + claude-code-setup
+            中间会询问所需参数
 ```

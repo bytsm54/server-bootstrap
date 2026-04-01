@@ -1,0 +1,104 @@
+# ============================================================
+#  Zsh Configuration - Optimized for Development
+# ============================================================
+
+# --- History ---
+HISTFILE=~/.zsh_history
+HISTSIZE=10000
+SAVEHIST=10000
+setopt APPEND_HISTORY SHARE_HISTORY HIST_IGNORE_DUPS HIST_IGNORE_ALL_DUPS
+setopt HIST_IGNORE_SPACE HIST_REDUCE_BLANKS INC_APPEND_HISTORY
+
+# --- Directory Navigation ---
+setopt AUTO_CD AUTO_PUSHD PUSHD_IGNORE_DUPS PUSHD_SILENT
+
+# --- Completion ---
+autoload -Uz compinit && compinit
+zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'
+zstyle ':completion:*' menu select
+zstyle ':completion:*' list-colors "${(s.:.)LS_COLORS}"
+zstyle ':completion:*:descriptions' format '%F{yellow}-- %d --%f'
+zstyle ':completion:*:warnings' format '%F{red}-- no matches --%f'
+
+# --- Key Bindings ---
+bindkey -e
+bindkey '^[[A' history-search-backward
+bindkey '^[[B' history-search-forward
+bindkey '^[[H' beginning-of-line
+bindkey '^[[F' end-of-line
+bindkey '^[[3~' delete-char
+
+# --- Colors ---
+autoload -Uz colors && colors
+
+# ============================================================
+#  Git Integration
+# ============================================================
+autoload -Uz vcs_info
+precmd_vcs_info() { vcs_info }
+precmd_functions+=( precmd_vcs_info )
+setopt PROMPT_SUBST
+
+zstyle ':vcs_info:*' enable git
+zstyle ':vcs_info:*' check-for-changes true
+zstyle ':vcs_info:*' stagedstr '%F{green}●%f'
+zstyle ':vcs_info:*' unstagedstr '%F{red}●%f'
+zstyle ':vcs_info:git:*' formats ' %F{cyan}(%F{magenta}%b%F{cyan})%f%c%u'
+zstyle ':vcs_info:git:*' actionformats ' %F{cyan}(%F{magenta}%b%F{cyan}|%F{red}%a%F{cyan})%f%c%u'
+
+# ============================================================
+#  Prompt: user@host ~/path (branch)●
+#          ❯
+# ============================================================
+PROMPT='
+%F{blue}%n%f%F{white}@%f%F{yellow}%m%f  %F{green}%~%f${vcs_info_msg_0_}
+%(?.%F{green}.%F{red})❯%f '
+RPROMPT='%F{240}%*%f'
+
+# ============================================================
+#  Aliases
+# ============================================================
+alias ls='ls --color=auto'
+alias ll='ls -alFh'
+alias la='ls -A'
+alias grep='grep --color=auto'
+alias gs='git status'
+alias ga='git add'
+alias gc='git commit'
+alias gp='git push'
+alias gl='git log --oneline --graph --decorate -20'
+alias gd='git diff'
+alias gb='git branch'
+alias gco='git checkout'
+alias ..='cd ..'
+alias ...='cd ../..'
+alias mkdir='mkdir -pv'
+alias df='df -h'
+alias du='du -h'
+alias free='free -h'
+alias cc='claude --dangerously-skip-permissions'
+
+# ============================================================
+#  Environment
+# ============================================================
+export EDITOR=vim
+export LANG=en_US.UTF-8
+[[ -d "$HOME/.local/bin" ]] && export PATH="$HOME/.local/bin:$PATH"
+
+# --- Window Title ---
+case $TERM in
+    xterm*|rxvt*|screen*|tmux*)
+        precmd() { print -Pn "\e]0;%n@%m: %~\a"; vcs_info }
+        ;;
+esac
+
+# --- Plugins (if installed) ---
+[[ -f /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]] && \
+    source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+[[ -f /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh ]] && \
+    source /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh
+
+# --- nvm (Node Version Manager) ---
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"

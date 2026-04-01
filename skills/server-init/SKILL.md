@@ -117,64 +117,14 @@ Change default shell for the user:
 sudo chsh -s $(which zsh) <username>
 ```
 
-Write `~/.zshrc` for the target user. The configuration should be lightweight (no oh-my-zsh or other frameworks) and include:
-
-**History:**
-```zsh
-HISTFILE=~/.zsh_history
-HISTSIZE=10000
-SAVEHIST=10000
-setopt SHARE_HISTORY
-setopt HIST_IGNORE_DUPS
-setopt HIST_IGNORE_SPACE
-```
-
-**Completion:**
-```zsh
-autoload -Uz compinit && compinit
-zstyle ':completion:*' menu select
-zstyle ':completion:*' matcher-list 'm:{a-z}={A-Z}'
-```
-
-**Git-aware prompt:**
-```zsh
-autoload -Uz vcs_info
-precmd() { vcs_info }
-zstyle ':vcs_info:git:*' formats ' %F{cyan}(%b)%f'
-zstyle ':vcs_info:git:*' actionformats ' %F{cyan}(%b|%a)%f'
-setopt PROMPT_SUBST
-PROMPT='%F{green}%n@%m%f %F{blue}%~%f${vcs_info_msg_0_} %F{yellow}$%f '
-```
-
-This prompt shows: `user@host ~/path (branch) $`
-- Full working directory path in blue
-- Git branch name in cyan (only shown inside a git repo)
-- Git action (rebase/merge) shown when in progress
-
-**Common aliases:**
-```zsh
-alias ll='ls -alF'
-alias la='ls -A'
-alias l='ls -CF'
-alias ..='cd ..'
-alias ...='cd ../..'
-```
-
-**Path, nvm, and environment:**
-```zsh
-# Claude Code CLI lives in ~/.local/bin
-export PATH="$HOME/.local/bin:$PATH"
-
-# nvm (Node Version Manager)
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-[ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"
-
-export EDITOR=vim
-export LANG=en_US.UTF-8
-```
-
 If the user already has a `~/.zshrc`, back it up to `~/.zshrc.bak` before overwriting.
+
+Write the **exact** content from `templates/zshrc` in this repo to `~/.zshrc`. Read the file at `~/server-bootstrap/templates/zshrc` (or wherever the repo was cloned) and write it verbatim. Do NOT paraphrase, summarize, or rewrite — copy it exactly.
+
+After writing, install optional zsh plugins if available:
+```bash
+sudo apt-get install -y zsh-syntax-highlighting zsh-autosuggestions 2>/dev/null || true
+```
 
 Verify: `grep $(which zsh) /etc/passwd` shows zsh as the user's shell.
 

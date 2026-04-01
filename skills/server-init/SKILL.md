@@ -32,14 +32,18 @@ sudo hostnamectl set-hostname <hostname>
 ```
 
 **If hostname contains underscores** (e.g., `openclaw_travel`):
-Both `hostnamectl` and `hostname` commands enforce RFC 1123 and will reject underscores. Write directly to the files instead:
+Both `hostnamectl` and `hostname` commands enforce RFC 1123 and will reject underscores. Write directly to the files and apply immediately:
 ```bash
+# Write to file
 echo "<hostname>" | sudo tee /etc/hostname
+
+# Apply immediately in current session (use the kernel interface, bypasses RFC validation)
+sudo sh -c 'echo "<hostname>" > /proc/sys/kernel/hostname'
 ```
 
 Then update `/etc/hosts` — replace the old hostname with the new one on the `127.0.1.1` line. Preserve all other entries.
 
-Verify: `cat /etc/hostname` should show the new hostname. Note: for non-RFC hostnames, `hostnamectl --static` will not reflect the change until reboot.
+Verify: `cat /proc/sys/kernel/hostname` should show the new hostname immediately.
 
 If any step fails, report the error and stop. Do not proceed to the next step.
 
@@ -146,6 +150,15 @@ This prompt shows: `user@host ~/path (branch) $`
 - Full working directory path in blue
 - Git branch name in cyan (only shown inside a git repo)
 - Git action (rebase/merge) shown when in progress
+
+**Common aliases:**
+```zsh
+alias ll='ls -alF'
+alias la='ls -A'
+alias l='ls -CF'
+alias ..='cd ..'
+alias ...='cd ../..'
+```
 
 **Path, nvm, and environment:**
 ```zsh

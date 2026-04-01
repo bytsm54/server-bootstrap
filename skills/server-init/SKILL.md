@@ -49,21 +49,37 @@ sudo update-locale LANG=en_US.UTF-8
 
 Verify: `timedatectl` shows correct timezone, `locale -a` includes both locales.
 
-### Step 3: Install Node.js
+### Step 3: Install Node.js via nvm
 
-Install via NodeSource. For LTS:
+Use nvm (Node Version Manager) to install Node.js in user space — no sudo needed, no permission issues with `npm install -g`.
 
-```bash
-curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
-sudo apt-get install -y nodejs
-```
+1. **Install nvm:**
+   ```bash
+   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+   ```
 
-For a specific version (e.g., `22`):
+2. **Load nvm into current shell:**
+   ```bash
+   export NVM_DIR="$HOME/.nvm"
+   [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+   ```
 
-```bash
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt-get install -y nodejs
-```
+3. **Install Node.js:**
+
+   For LTS (default):
+   ```bash
+   nvm install --lts
+   ```
+
+   For a specific version (e.g., `22`):
+   ```bash
+   nvm install 22
+   ```
+
+4. **Set as default:**
+   ```bash
+   nvm alias default node
+   ```
 
 Verify all three:
 ```bash
@@ -71,6 +87,8 @@ node --version
 npm --version
 npx --version
 ```
+
+nvm installs everything under `~/.nvm/` — global packages (`npm install -g`) go to `~/.nvm/versions/node/<version>/lib/node_modules/`, never touching `/usr/local/`.
 
 ### Step 4: Configure Zsh
 

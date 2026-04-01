@@ -33,7 +33,7 @@ Claude Code 读取仓库根目录的 `SKILL.md`（编排器），自动按三阶
 |------|------|--------|------|
 | `hostname` | 是 | — | 主机名 |
 | `timezone` | 否 | `Asia/Shanghai` | 系统时区 |
-| `node_version` | 否 | `lts` | Node.js 版本，通过 NodeSource 安装 |
+| `node_version` | 否 | `lts` | Node.js 版本，通过 nvm 安装 |
 | `username` | 否 | `ubuntu` | 主用户名（用于 zsh 配置） |
 
 ### 执行步骤
@@ -47,8 +47,9 @@ Claude Code 读取仓库根目录的 `SKILL.md`（编排器），自动按三阶
    - `timedatectl set-timezone <timezone>`
    - 确保 `en_US.UTF-8` 和 `zh_CN.UTF-8` locale 已生成
 
-3. **安装 Node.js / npm / npx**
-   - 通过 NodeSource 安装指定版本的 Node.js
+3. **安装 Node.js / npm / npx（通过 nvm）**
+   - 通过 nvm 安装到用户目录（`~/.nvm/`），无需 sudo，避免全局安装权限问题
+   - `nvm install --lts` 或指定版本 `nvm install 22`
    - 验证 `node --version`、`npm --version`、`npx --version`
 
 4. **配置 zsh**

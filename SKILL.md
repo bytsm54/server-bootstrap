@@ -32,6 +32,16 @@ Collect all parameters upfront before starting:
 | `github_username` | yes | — | GitHub username |
 | `github_email` | yes | — | GitHub email |
 
+## Phase Dependencies
+
+```
+Phase 1 (server-init)      → produces: node, npm, npx, zsh, ~/.local/bin in PATH
+Phase 2 (skill registration) → requires: npx (from Phase 1)
+Phase 3a (ssh-hardening)   → requires: nothing (independent)
+Phase 3b (claude-code-setup) → requires: node, claude CLI in PATH
+Phase 3a and 3b are independent and can run in either order.
+```
+
 ## Execution Order
 
 ### Phase 1 — Server Init (no Node.js yet)
@@ -46,17 +56,47 @@ Node.js is not available at this point, so skills cannot be formally installed v
 3. Execute it with the user's parameters — this installs Node.js, sets hostname, timezone, and configures zsh
 4. Verify Node.js is available: `node --version && npm --version && npx --version`
 
-### Phase 2 — Install Skills (Node.js now available)
+### Between Phase 1 and 2 — Verify PATH
 
-Now that npm/npx work, formally install all three skills so they are registered in Claude Code:
+After server-init completes, ensure all tools are accessible in the current shell:
 
 ```bash
-npx skills add bytsm54/server-bootstrap@server-init -g -y
-npx skills add bytsm54/server-bootstrap@ssh-hardening -g -y
-npx skills add bytsm54/server-bootstrap@claude-code-setup -g -y
+# Load nvm
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+
+# Ensure ~/.local/bin is in PATH (for claude CLI)
+export PATH="$HOME/.local/bin:$PATH"
+
+# Verify
+node --version && npm --version && npx --version && claude --version
 ```
 
-Verify: `ls ~/.claude/skills/` shows all three.
+If any command fails, diagnose and fix before proceeding. Do not skip this step.
+
+### Phase 2 — Register Skills in Claude Code (Node.js now available)
+
+The skills CLI (`npx skills add`) only recognizes the root-level SKILL.md in a repo, not sub-directory skills. So we install the top-level skill, then manually symlink the three sub-skills.
+
+1. Install the top-level skill:
+   ```bash
+   npx skills add bytsm54/server-bootstrap -g -y
+   ```
+
+2. Symlink sub-skills so Claude Code can invoke them individually:
+   ```bash
+   SKILL_SRC="$HOME/.agents/skills/server-bootstrap"
+   ln -sf "$SKILL_SRC/skills/server-init" "$HOME/.claude/skills/server-init"
+   ln -sf "$SKILL_SRC/skills/ssh-hardening" "$HOME/.claude/skills/ssh-hardening"
+   ln -sf "$SKILL_SRC/skills/claude-code-setup" "$HOME/.claude/skills/claude-code-setup"
+   ```
+
+3. Verify:
+   ```bash
+   ls -la ~/.claude/skills/ | grep -E "server-init|ssh-hardening|claude-code-setup"
+   ```
+
+If any step fails, report the error and stop.
 
 ### Phase 3 — Execute remaining skills
 

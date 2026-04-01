@@ -38,7 +38,9 @@ git config --global user.email "<github_email>"
 
 Verify: `git config --global --list` shows correct name and email.
 
-### Step 2: Configure GitHub Authentication
+### Step 2: Configure GitHub Authentication (optional)
+
+GitHub token is only needed if the user wants to push code or access private repos. Skip this step if the user doesn't need it.
 
 Check if `GITHUB_TOKEN` is set:
 
@@ -46,7 +48,7 @@ Check if `GITHUB_TOKEN` is set:
 echo "GITHUB_TOKEN length: ${#GITHUB_TOKEN}"
 ```
 
-**If not set (length 0):** guide the user through setup:
+**If not set and user wants GitHub auth:** guide them through setup:
 
 1. Go to https://github.com/settings/tokens?type=beta
 2. Create a Fine-grained PAT with permissions:
@@ -57,7 +59,7 @@ echo "GITHUB_TOKEN length: ${#GITHUB_TOKEN}"
    ! echo 'export GITHUB_TOKEN=<token>' >> ~/.zshrc && source ~/.zshrc
    ```
 
-**Verify token is valid:**
+**If set, verify token is valid:**
 
 ```bash
 curl -s -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/user | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Authenticated as: {d.get(\"login\")}')"
@@ -70,6 +72,8 @@ git config --global credential.helper store
 echo "https://<github_username>:${GITHUB_TOKEN}@github.com" > ~/.git-credentials
 chmod 600 ~/.git-credentials
 ```
+
+**If user skips this step:** that's fine. Public repos clone/skill install work without auth. Proceed to Step 3.
 
 ### Step 3: Install GitHub CLI
 
@@ -88,8 +92,10 @@ Verify: `gh auth status` shows authenticated.
 ### Step 4: Install Plugins
 
 Install each plugin. For each plugin:
-1. Add its marketplace: `claude /plugin marketplace add <marketplace-name>`
+1. Add its marketplace: `claude plugin marketplace add <owner/repo>`
 2. Install: `claude plugins install <plugin>@<marketplace>`
+
+Note: use `claude plugin` (no slash), not `claude /plugin`. The `/plugin` form is a slash command inside an active session, not a CLI subcommand.
 
 The installation commands automatically update `~/.claude/settings.json` and `~/.claude/plugins/installed_plugins.json`.
 
@@ -98,12 +104,14 @@ The installation commands automatically update `~/.claude/settings.json` and `~/
 | Plugin | Marketplace Add Command | Install Command |
 |--------|------------------------|----------------|
 | `superpowers` | (already in default marketplace) | `claude plugins install superpowers@claude-plugins-official` |
-| `claude-mem` | `claude /plugin marketplace add thedotmack/claude-mem` | `claude plugins install claude-mem@thedotmack` |
-| `web-access` | `claude /plugin marketplace add --git https://github.com/eze-is/web-access.git` | `claude plugins install web-access@web-access` |
-| `pua` | `claude /plugin marketplace add tanweai/pua` | `claude plugins install pua@pua-skills` |
-| `claude-hud` | `claude /plugin marketplace add jarrodwatts/claude-hud` | `claude plugins install claude-hud@claude-hud` |
+| `claude-mem` | `claude plugin marketplace add thedotmack/claude-mem` | `claude plugins install claude-mem@thedotmack` |
+| `web-access` | `claude plugin marketplace add eze-is/web-access` | `claude plugins install web-access@web-access` |
+| `pua` | `claude plugin marketplace add tanweai/pua` | `claude plugins install pua@pua-skills` |
+| `claude-hud` | `claude plugin marketplace add jarrodwatts/claude-hud` | `claude plugins install claude-hud@claude-hud` |
 
 Run each install command. Skip any plugin in the user's `skip_plugins` list. Add any from `extra_plugins`.
+
+If a plugin installation fails, report the error and continue with the remaining plugins.
 
 After all installs, verify:
 

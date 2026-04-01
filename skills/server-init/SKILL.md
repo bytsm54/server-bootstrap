@@ -24,15 +24,24 @@ Follow these steps in order. Verify each step before proceeding to the next.
 
 ### Step 1: Set Hostname
 
+Check if the hostname contains underscores or other RFC 1123 non-compliant characters:
+
+**If hostname is RFC-compliant** (letters, digits, hyphens only):
 ```bash
 sudo hostnamectl set-hostname <hostname>
 ```
 
-Then update `/etc/hosts` — replace the old hostname with the new one. Preserve all other entries.
+**If hostname contains underscores** (e.g., `openclaw_travel`):
+Both `hostnamectl` and `hostname` commands enforce RFC 1123 and will reject underscores. Write directly to the files instead:
+```bash
+echo "<hostname>" | sudo tee /etc/hostname
+```
 
-Hostname validation: `hostnamectl` enforces RFC 1123 (no underscores). If the user wants an underscore in the hostname, write directly to `/etc/hostname` and update `/etc/hosts` manually instead of using `hostnamectl`.
+Then update `/etc/hosts` — replace the old hostname with the new one on the `127.0.1.1` line. Preserve all other entries.
 
-Verify: `hostnamectl --static` should show the new hostname.
+Verify: `cat /etc/hostname` should show the new hostname. Note: for non-RFC hostnames, `hostnamectl --static` will not reflect the change until reboot.
+
+If any step fails, report the error and stop. Do not proceed to the next step.
 
 ### Step 2: Set Timezone and Locale
 
@@ -138,9 +147,16 @@ This prompt shows: `user@host ~/path (branch) $`
 - Git branch name in cyan (only shown inside a git repo)
 - Git action (rebase/merge) shown when in progress
 
-**Path and environment:**
+**Path, nvm, and environment:**
 ```zsh
+# Claude Code CLI lives in ~/.local/bin
 export PATH="$HOME/.local/bin:$PATH"
+
+# nvm (Node Version Manager)
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+[ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"
+
 export EDITOR=vim
 export LANG=en_US.UTF-8
 ```

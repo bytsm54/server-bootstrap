@@ -87,17 +87,21 @@ Verify: `gh auth status` shows authenticated.
 
 ### Step 4: Install Plugins
 
-Install each plugin using `claude plugins install`. The installation commands automatically update `~/.claude/settings.json` and `~/.claude/plugins/installed_plugins.json`.
+Install each plugin. For each plugin:
+1. Add its marketplace: `claude /plugin marketplace add <marketplace-name>`
+2. Install: `claude plugins install <plugin>@<marketplace>`
+
+The installation commands automatically update `~/.claude/settings.json` and `~/.claude/plugins/installed_plugins.json`.
 
 **Default plugin list (5):**
 
-| Plugin | Install Source |
-|--------|---------------|
-| `superpowers` | `claude-plugins-official` from `anthropics/claude-code-plugins` |
-| `claude-mem` | `thedotmack` from `thedotmack/claude-mem` |
-| `web-access` | `web-access` from `https://github.com/eze-is/web-access.git` |
-| `pua` | `pua-skills` from `tanweai/pua` |
-| `claude-hud` | `jarrodwatts` from `jarrodwatts/claude-hud` |
+| Plugin | Marketplace Add Command | Install Command |
+|--------|------------------------|----------------|
+| `superpowers` | (already in default marketplace) | `claude plugins install superpowers@claude-plugins-official` |
+| `claude-mem` | `claude /plugin marketplace add thedotmack/claude-mem` | `claude plugins install claude-mem@thedotmack` |
+| `web-access` | `claude /plugin marketplace add --git https://github.com/eze-is/web-access.git` | `claude plugins install web-access@web-access` |
+| `pua` | `claude /plugin marketplace add tanweai/pua` | `claude plugins install pua@pua-skills` |
+| `claude-hud` | `claude /plugin marketplace add jarrodwatts/claude-hud` | `claude plugins install claude-hud@claude-hud` |
 
 Run each install command. Skip any plugin in the user's `skip_plugins` list. Add any from `extra_plugins`.
 
@@ -106,6 +110,48 @@ After all installs, verify:
 ```bash
 cat ~/.claude/plugins/installed_plugins.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Installed plugins: {len(d[\"plugins\"])}')"
 ```
+
+### Step 4.1: Configure claude-hud
+
+After installing claude-hud, configure its statusline and optional features:
+
+1. **Detect runtime and plugin path:**
+   ```bash
+   PLUGIN_DIR=$(ls -d "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/plugins/cache/claude-hud/claude-hud/*/ 2>/dev/null | awk -F/ '{ print $(NF-1) "\t" $0 }' | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n | tail -1 | cut -f2-)
+   RUNTIME=$(command -v bun 2>/dev/null || command -v node 2>/dev/null)
+   # If runtime is bun, SOURCE=src/index.ts; if node, SOURCE=dist/index.js
+   ```
+
+2. **Test the command:**
+   ```bash
+   bash -c 'plugin_dir=$(ls -d "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/plugins/cache/claude-hud/claude-hud/*/ 2>/dev/null | awk -F/ '"'"'{ print $(NF-1) "\t" $(0) }'"'"' | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n | tail -1 | cut -f2-); exec "<RUNTIME>" "${plugin_dir}<SOURCE>"' 2>&1 | head -3
+   ```
+   Replace `<RUNTIME>` and `<SOURCE>` with detected values. Should produce output within seconds.
+
+3. **Write statusLine config** into `~/.claude/settings.json` (merge, don't overwrite):
+   ```json
+   {
+     "statusLine": {
+       "type": "command",
+       "command": "<the tested command from step 2>"
+     }
+   }
+   ```
+
+4. **Enable optional features** — write `~/.claude/plugins/claude-hud/config.json`:
+   ```json
+   {
+     "display": {
+       "showTools": true,
+       "showAgents": true,
+       "showTodos": true,
+       "showDuration": true,
+       "showConfigCounts": true
+     }
+   }
+   ```
+
+5. **Remind user**: statusLine requires a Claude Code restart to take effect.
 
 ### Step 5: Install Skills
 

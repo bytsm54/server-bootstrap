@@ -34,14 +34,37 @@ Collect all parameters upfront before starting:
 
 ## Execution Order
 
+### Phase 0 — GitHub Authentication (required for private repo)
+
+This repo is **private**. Before cloning, ensure GitHub authentication is configured:
+
+1. Check if `GITHUB_TOKEN` environment variable is set:
+   ```bash
+   echo "GITHUB_TOKEN length: ${#GITHUB_TOKEN}"
+   ```
+
+2. If not set (length 0), guide the user:
+   - Go to https://github.com/settings/tokens?type=beta
+   - Create a Fine-grained PAT with **Contents: Read** permission (minimum for clone)
+   - In Claude Code, execute:
+     ```
+     ! echo 'export GITHUB_TOKEN=<token>' >> ~/.zshrc && source ~/.zshrc
+     ```
+   - If zsh is not yet the default shell (fresh server), use `~/.bashrc` instead
+
+3. Verify token works:
+   ```bash
+   curl -s -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/user
+   ```
+
+4. Clone the repo using the token:
+   ```bash
+   git clone https://x-access-token:${GITHUB_TOKEN}@github.com/bytsm54/server-bootstrap.git ~/server-bootstrap
+   ```
+
 ### Phase 1 — Server Init (no Node.js yet)
 
 Node.js is not available at this point, so skills cannot be formally installed via `npx skills add`.
-
-1. The `server-bootstrap` repo should already be cloned locally (the user told you to clone it, or you are reading this from a local clone). If not, clone it:
-   ```bash
-   git clone https://github.com/bytsm54/server-bootstrap.git ~/server-bootstrap
-   ```
 2. Read `skills/server-init/SKILL.md` from the local clone
 3. Execute it with the user's parameters — this installs Node.js, sets hostname, timezone, and configures zsh
 4. Verify Node.js is available: `node --version && npm --version && npx --version`

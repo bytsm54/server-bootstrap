@@ -107,17 +107,40 @@ nvm installs everything under `~/.nvm/` — global packages (`npm install -g`) g
 
 Some cloud providers (e.g. Tencent Cloud) ship with `~/.npmrc` pointing to an internal mirror that may be missing native binary packages (like tree-sitter). This causes silent failures when plugins try to install dependencies.
 
-Check and fix:
+**Strategy:** Detect server location first, then choose the right registry:
+- **China mainland** → npmmirror.com (淘宝镜像，包全且快)
+- **Overseas** → registry.npmjs.org (official)
+
+Both are public mirrors with full native binary coverage. The key is replacing cloud-internal mirrors (tencentyun/aliyuncs) that are incomplete.
 
 ```bash
+# Detect if server is in China by checking cloud metadata or latency
+IS_CN=false
+# Method 1: Check if Tencent/Alibaba cloud internal DNS resolves
+if host mirrors.tencentyun.com >/dev/null 2>&1 && \
+   curl -s --connect-timeout 2 http://mirrors.tencentyun.com >/dev/null 2>&1; then
+  IS_CN=true
+# Method 2: Check timezone as fallback
+elif timedatectl show -p Timezone --value 2>/dev/null | grep -q 'Asia/Shanghai\|Asia/Chongqing'; then
+  IS_CN=true
+fi
+
+if [ "$IS_CN" = true ]; then
+  REGISTRY="https://registry.npmmirror.com"
+else
+  REGISTRY="https://registry.npmjs.org"
+fi
+
+# Replace cloud-internal mirrors, or set if not configured
 if [ -f ~/.npmrc ] && grep -q 'mirrors.tencentyun.com\|mirrors.cloud.aliyuncs.com' ~/.npmrc; then
-  echo "⚠️  Found cloud-internal npm mirror in ~/.npmrc — replacing with official registry"
-  sed -i 's|registry=.*|registry=https://registry.npmjs.org|' ~/.npmrc
+  echo "⚠️  Found cloud-internal npm mirror — replacing with $REGISTRY"
+  sed -i "s|registry=.*|registry=$REGISTRY|" ~/.npmrc
 elif [ -f ~/.npmrc ] && grep -q 'registry=' ~/.npmrc; then
   echo "ℹ️  Custom npm registry found: $(grep 'registry=' ~/.npmrc)"
-  echo "    If plugin installs fail later, try: npm config set registry https://registry.npmjs.org"
+  echo "    If plugin installs fail later, try: npm config set registry $REGISTRY"
 else
-  echo "ℹ️  No custom npm registry configured, using default (npmjs.org)"
+  echo "ℹ️  Setting npm registry to $REGISTRY"
+  echo "registry=$REGISTRY" >> ~/.npmrc
 fi
 ```
 

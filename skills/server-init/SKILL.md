@@ -103,6 +103,26 @@ npx --version
 
 nvm installs everything under `~/.nvm/` — global packages (`npm install -g`) go to `~/.nvm/versions/node/<version>/lib/node_modules/`, never touching `/usr/local/`.
 
+### Step 3.1: Configure npm Registry
+
+Some cloud providers (e.g. Tencent Cloud) ship with `~/.npmrc` pointing to an internal mirror that may be missing native binary packages (like tree-sitter). This causes silent failures when plugins try to install dependencies.
+
+Check and fix:
+
+```bash
+if [ -f ~/.npmrc ] && grep -q 'mirrors.tencentyun.com\|mirrors.cloud.aliyuncs.com' ~/.npmrc; then
+  echo "⚠️  Found cloud-internal npm mirror in ~/.npmrc — replacing with official registry"
+  sed -i 's|registry=.*|registry=https://registry.npmjs.org|' ~/.npmrc
+elif [ -f ~/.npmrc ] && grep -q 'registry=' ~/.npmrc; then
+  echo "ℹ️  Custom npm registry found: $(grep 'registry=' ~/.npmrc)"
+  echo "    If plugin installs fail later, try: npm config set registry https://registry.npmjs.org"
+else
+  echo "ℹ️  No custom npm registry configured, using default (npmjs.org)"
+fi
+```
+
+This prevents downstream failures in claude-mem and other plugins that install native npm packages via their SessionStart hooks.
+
 ### Step 4: Configure Zsh
 
 Install zsh:

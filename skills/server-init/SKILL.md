@@ -139,6 +139,9 @@ Timezone:  <result of timedatectl show -p Timezone --value>
 Node.js:   <node --version>
 npm:       <npm --version>
 Shell:     <echo $SHELL or grep from /etc/passwd>
+
+⚠️  Default shell changed to zsh. Run `zsh -l` or reconnect SSH to activate.
+    Do NOT run `source ~/.zshrc` in bash — it will fail because .zshrc uses zsh-only syntax.
 ```
 
 ## Scope

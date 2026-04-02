@@ -86,9 +86,10 @@ export LANG=en_US.UTF-8
 [[ -d "$HOME/.local/bin" ]] && export PATH="$HOME/.local/bin:$PATH"
 
 # --- Window Title ---
+# Note: vcs_info is already called via precmd_functions (line 38-39), do NOT call it again here
 case $TERM in
     xterm*|rxvt*|screen*|tmux*)
-        precmd() { print -Pn "\e]0;%n@%m: %~\a"; vcs_info }
+        precmd() { print -Pn "\e]0;%n@%m: %~\a" }
         ;;
 esac
 

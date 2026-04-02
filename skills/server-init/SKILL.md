@@ -119,7 +119,7 @@ sudo chsh -s $(which zsh) <username>
 
 If the user already has a `~/.zshrc`, back it up to `~/.zshrc.bak` before overwriting.
 
-Write the **exact** content from `templates/zshrc` in this repo to `~/.zshrc`. Read the file at `~/server-bootstrap/templates/zshrc` (or wherever the repo was cloned) and write it verbatim. Do NOT paraphrase, summarize, or rewrite — copy it exactly.
+Write the **exact** content from `templates/zshrc` in this repo to `~/.zshrc`. Read the file at `$REPO_DIR/templates/zshrc` (where `$REPO_DIR` is the path the repo was cloned to — defaults to `~/server-bootstrap` but may differ) and write it verbatim. Do NOT paraphrase, summarize, or rewrite — copy it exactly.
 
 After writing, install optional zsh plugins if available:
 ```bash

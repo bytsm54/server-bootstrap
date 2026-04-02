@@ -81,13 +81,18 @@ chmod 600 ~/.git-credentials
 type gh >/dev/null 2>&1 || (curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli-stable.list > /dev/null && sudo apt-get update && sudo apt-get install -y gh)
 ```
 
-Authenticate gh with the token:
+Authenticate gh with the token — **only if GITHUB_TOKEN is set** (Step 2 may have been skipped):
 
 ```bash
-echo "$GITHUB_TOKEN" | gh auth login --with-token
+if [ -n "$GITHUB_TOKEN" ]; then
+  echo "$GITHUB_TOKEN" | gh auth login --with-token
+  echo "gh auth: configured"
+else
+  echo "gh auth: skipped (no GITHUB_TOKEN). gh will work for public repos only."
+fi
 ```
 
-Verify: `gh auth status` shows authenticated.
+If token was provided, verify: `gh auth status` shows authenticated.
 
 ### Step 4: Install Plugins
 
@@ -123,25 +128,47 @@ cat ~/.claude/plugins/installed_plugins.json | python3 -c "import sys,json; d=js
 
 After installing claude-hud, configure its statusline and optional features:
 
-1. **Detect runtime and plugin path:**
+1. **Create a wrapper script** at `~/.local/bin/claude-hud-run`:
    ```bash
-   PLUGIN_DIR=$(ls -d "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/plugins/cache/claude-hud/claude-hud/*/ 2>/dev/null | awk -F/ '{ print $(NF-1) "\t" $0 }' | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n | tail -1 | cut -f2-)
-   RUNTIME=$(command -v bun 2>/dev/null || command -v node 2>/dev/null)
-   # If runtime is bun, SOURCE=src/index.ts; if node, SOURCE=dist/index.js
+   mkdir -p ~/.local/bin
+   cat > ~/.local/bin/claude-hud-run << 'WRAPPER'
+   #!/usr/bin/env bash
+   CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+   HUD_BASE="$CLAUDE_DIR/plugins/cache/claude-hud/claude-hud"
+
+   # Find the latest version directory
+   PLUGIN_DIR=""
+   if [ -d "$HUD_BASE" ]; then
+     PLUGIN_DIR=$(find "$HUD_BASE" -mindepth 1 -maxdepth 1 -type d | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
+   fi
+
+   if [ -z "$PLUGIN_DIR" ]; then
+     echo "claude-hud not found"
+     exit 1
+   fi
+
+   # Prefer bun, fall back to node
+   if command -v bun >/dev/null 2>&1; then
+     exec bun "$PLUGIN_DIR/src/index.ts"
+   else
+     exec node "$PLUGIN_DIR/dist/index.js"
+   fi
+   WRAPPER
+   chmod +x ~/.local/bin/claude-hud-run
    ```
 
-2. **Test the command:**
+2. **Test the wrapper:**
    ```bash
-   bash -c 'plugin_dir=$(ls -d "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/plugins/cache/claude-hud/claude-hud/*/ 2>/dev/null | awk -F/ '"'"'{ print $(NF-1) "\t" $(0) }'"'"' | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n | tail -1 | cut -f2-); exec "<RUNTIME>" "${plugin_dir}<SOURCE>"' 2>&1 | head -3
+   ~/.local/bin/claude-hud-run 2>&1 | head -3
    ```
-   Replace `<RUNTIME>` and `<SOURCE>` with detected values. Should produce output within seconds.
+   Should produce output within seconds. If it fails, debug the wrapper script.
 
 3. **Write statusLine config** into `~/.claude/settings.json` (merge, don't overwrite):
    ```json
    {
      "statusLine": {
        "type": "command",
-       "command": "<the tested command from step 2>"
+       "command": "claude-hud-run"
      }
    }
    ```

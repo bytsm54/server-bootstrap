@@ -48,11 +48,13 @@ Phase 3a and 3b are independent and can run in either order.
 
 Node.js is not available at this point, so skills cannot be formally installed via `npx skills add`.
 
-1. Clone the repo:
+1. Clone the repo (default `~/server-bootstrap`, or current directory if user specifies):
    ```bash
-   git clone https://github.com/bytsm54/server-bootstrap.git ~/server-bootstrap
+   REPO_DIR="${REPO_DIR:-$HOME/server-bootstrap}"
+   git clone https://github.com/bytsm54/server-bootstrap.git "$REPO_DIR"
    ```
-2. Read `skills/server-init/SKILL.md` from the local clone
+   **All subsequent references to repo files use `$REPO_DIR`.** If the user cloned to a different path, set `REPO_DIR` accordingly.
+2. Read `$REPO_DIR/skills/server-init/SKILL.md` from the local clone
 3. Execute it with the user's parameters — this installs Node.js, sets hostname, timezone, and configures zsh
 4. Verify Node.js is available: `node --version && npm --version && npx --version`
 
@@ -74,9 +76,21 @@ node --version && npm --version && npx --version && claude --version
 
 If any command fails, diagnose and fix before proceeding. Do not skip this step.
 
+**IMPORTANT — nvm in Claude Code's Bash tool:** Claude Code spawns a fresh shell for every `Bash` tool call. The nvm loader from `.zshrc` is NOT automatically sourced because Bash tool uses `bash`, not `zsh -l`. For **every** subsequent Bash command that needs `node`, `npm`, or `npx`, you MUST prepend:
+
+```bash
+export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" && <your command>
+```
+
+Alternatively, after Phase 1 completes and `.zshrc` is configured, you can run commands via login zsh which auto-sources nvm:
+
+```bash
+zsh -l -c "<your command>"
+```
+
 ### Phase 2 — Register Skills in Claude Code (Node.js now available)
 
-The skills CLI (`npx skills add`) only recognizes the root-level SKILL.md in a repo, not sub-directory skills. So we install the top-level skill, then manually symlink the three sub-skills.
+The skills CLI (`npx skills add`) only recognizes the root-level SKILL.md in a repo, not sub-directory skills. So we install the top-level skill, then symlink the three sub-skills.
 
 1. Install the top-level skill:
    ```bash
@@ -97,6 +111,16 @@ The skills CLI (`npx skills add`) only recognizes the root-level SKILL.md in a r
    ```
 
 If any step fails, report the error and stop.
+
+**Note on updates:** `npx skills update server-bootstrap` will pull the latest root skill, and because symlinks point into the installed skill directory, sub-skills update automatically — the symlinks follow the target. However, if a new sub-skill is **added** to a future version, the symlink for it must be created manually. To re-sync all sub-skills after an update:
+
+```bash
+SKILL_SRC="$HOME/.agents/skills/server-bootstrap"
+for sub in "$SKILL_SRC"/skills/*/; do
+  name=$(basename "$sub")
+  ln -sf "$sub" "$HOME/.claude/skills/$name"
+done
+```
 
 ### Phase 3 — Execute remaining skills
 

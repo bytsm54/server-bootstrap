@@ -107,28 +107,19 @@ nvm installs everything under `~/.nvm/` — global packages (`npm install -g`) g
 
 Some cloud providers (e.g. Tencent Cloud) ship with `~/.npmrc` pointing to an internal mirror that may be missing native binary packages (like tree-sitter). This causes silent failures when plugins try to install dependencies.
 
-**Strategy:** Detect server location first, then choose the right registry:
-- **China mainland** → npmmirror.com (淘宝镜像，包全且快)
-- **Overseas** → registry.npmjs.org (official)
-
-Both are public mirrors with full native binary coverage. The key is replacing cloud-internal mirrors (tencentyun/aliyuncs) that are incomplete.
+**Strategy:** Race both registries, pick the faster one. Both have full native binary coverage — the only thing that matters is which one the server reaches faster.
 
 ```bash
-# Detect if server is in China by checking cloud metadata or latency
-IS_CN=false
-# Method 1: Check if Tencent/Alibaba cloud internal DNS resolves
-if host mirrors.tencentyun.com >/dev/null 2>&1 && \
-   curl -s --connect-timeout 2 http://mirrors.tencentyun.com >/dev/null 2>&1; then
-  IS_CN=true
-# Method 2: Check timezone as fallback
-elif timedatectl show -p Timezone --value 2>/dev/null | grep -q 'Asia/Shanghai\|Asia/Chongqing'; then
-  IS_CN=true
-fi
+# Race two registries — whoever responds first wins
+time_npm=$(curl -s -o /dev/null -w '%{time_total}' --connect-timeout 3 https://registry.npmjs.org/ 2>/dev/null || echo 999)
+time_cnm=$(curl -s -o /dev/null -w '%{time_total}' --connect-timeout 3 https://registry.npmmirror.com/ 2>/dev/null || echo 999)
 
-if [ "$IS_CN" = true ]; then
+if [ "$(echo "$time_cnm < $time_npm" | bc 2>/dev/null || echo 0)" = "1" ]; then
   REGISTRY="https://registry.npmmirror.com"
+  echo "ℹ️  npmmirror.com faster (${time_cnm}s vs ${time_npm}s) — using China mirror"
 else
   REGISTRY="https://registry.npmjs.org"
+  echo "ℹ️  npmjs.org faster (${time_npm}s vs ${time_cnm}s) — using official registry"
 fi
 
 # Replace cloud-internal mirrors, or set if not configured

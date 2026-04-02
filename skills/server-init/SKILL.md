@@ -15,8 +15,9 @@ Ask the user for these if not provided:
 |-----------|----------|---------|-------------|
 | `hostname` | yes | — | Server hostname |
 | `timezone` | no | `Asia/Shanghai` | System timezone |
-| `node_version` | no | `lts` | Node.js version to install via NodeSource |
+| `node_version` | no | `lts` | Node.js version to install via nvm |
 | `username` | no | `ubuntu` | Primary user (for zsh config and default shell) |
+| `npm_registry` | no | `official` | npm registry: `china` (npmmirror.com) or `official` (npmjs.org) |
 
 ## Execution
 
@@ -107,30 +108,22 @@ nvm installs everything under `~/.nvm/` — global packages (`npm install -g`) g
 
 Some cloud providers (e.g. Tencent Cloud) ship with `~/.npmrc` pointing to an internal mirror that may be missing native binary packages (like tree-sitter). This causes silent failures when plugins try to install dependencies.
 
-**Strategy:** Race both registries, pick the faster one. Both have full native binary coverage — the only thing that matters is which one the server reaches faster.
+Use the `npm_registry` parameter:
+- `china` → `https://registry.npmmirror.com`
+- `official` (default) → `https://registry.npmjs.org`
 
 ```bash
-# Race two registries — whoever responds first wins
-time_npm=$(curl -s -o /dev/null -w '%{time_total}' --connect-timeout 3 https://registry.npmjs.org/ 2>/dev/null || echo 999)
-time_cnm=$(curl -s -o /dev/null -w '%{time_total}' --connect-timeout 3 https://registry.npmmirror.com/ 2>/dev/null || echo 999)
-
-if [ "$(echo "$time_cnm < $time_npm" | bc 2>/dev/null || echo 0)" = "1" ]; then
+# Set registry based on user parameter
+if [ "<npm_registry>" = "china" ]; then
   REGISTRY="https://registry.npmmirror.com"
-  echo "ℹ️  npmmirror.com faster (${time_cnm}s vs ${time_npm}s) — using China mirror"
 else
   REGISTRY="https://registry.npmjs.org"
-  echo "ℹ️  npmjs.org faster (${time_npm}s vs ${time_cnm}s) — using official registry"
 fi
 
-# Replace cloud-internal mirrors, or set if not configured
-if [ -f ~/.npmrc ] && grep -q 'mirrors.tencentyun.com\|mirrors.cloud.aliyuncs.com' ~/.npmrc; then
-  echo "⚠️  Found cloud-internal npm mirror — replacing with $REGISTRY"
+# Write to ~/.npmrc (replace existing or create new)
+if [ -f ~/.npmrc ] && grep -q 'registry=' ~/.npmrc; then
   sed -i "s|registry=.*|registry=$REGISTRY|" ~/.npmrc
-elif [ -f ~/.npmrc ] && grep -q 'registry=' ~/.npmrc; then
-  echo "ℹ️  Custom npm registry found: $(grep 'registry=' ~/.npmrc)"
-  echo "    If plugin installs fail later, try: npm config set registry $REGISTRY"
 else
-  echo "ℹ️  Setting npm registry to $REGISTRY"
   echo "registry=$REGISTRY" >> ~/.npmrc
 fi
 ```

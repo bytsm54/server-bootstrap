@@ -18,6 +18,7 @@ Collect all parameters upfront before starting:
 | `timezone` | no | `Asia/Shanghai` | System timezone |
 | `node_version` | no | `lts` | Node.js version |
 | `username` | no | `ubuntu` | Primary user |
+| `npm_registry` | no | `official` | `china` (npmmirror.com) or `official` (npmjs.org) |
 
 **ssh-hardening:**
 | Parameter | Required | Default | Description |

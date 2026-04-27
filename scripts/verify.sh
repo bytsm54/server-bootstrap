@@ -69,6 +69,36 @@ if command -v uv >/dev/null 2>&1; then
   ok "uv:         $(uv --version)"
 fi
 
+# zsh（仅 install_zsh 用了才报）
+if command -v zsh >/dev/null 2>&1; then
+  USER_SHELL="$(getent passwd "$(id -un)" | cut -d: -f7)"
+  if [ "$USER_SHELL" = "$(command -v zsh)" ]; then
+    ok "zsh:        $(zsh --version | awk '{print $2}') (默认 shell)"
+  else
+    ok "zsh:        $(zsh --version | awk '{print $2}') (非默认, 默认是 $USER_SHELL)"
+  fi
+fi
+
+# sshd 当前实际监听的端口（仅当 phase 08 用了才有意义）
+if command -v ss >/dev/null 2>&1; then
+  PORTS="$(ss -ltnH 'sport = :22 or sport > :1024' 2>/dev/null \
+            | awk '{print $4}' | awk -F: '{print $NF}' \
+            | sort -u | grep -E '^[0-9]+$' \
+            | tr '\n' ',' | sed 's/,$//')"
+  # 通过 sshd 进程过滤
+  SSHD_PORTS="$(ss -ltnpH 2>/dev/null | grep -i sshd \
+                | awk '{print $4}' | awk -F: '{print $NF}' \
+                | sort -u | tr '\n' ',' | sed 's/,$//')"
+  if [ -n "$SSHD_PORTS" ]; then
+    ok "sshd:       listening on ${SSHD_PORTS}"
+  fi
+fi
+
+# deadman 状态（如果有挂起的 at 任务, 提醒用户）
+if [ -f /var/run/sshd-bootstrap-deadman.atjob ] || sudo test -f /var/run/sshd-bootstrap-deadman.atjob 2>/dev/null; then
+  warn "SSH:        发现挂起的 deadman 任务 — 你应该跑 phase 08 confirm 或 rollback"
+fi
+
 echo "=========================="
 echo " done"
 echo "=========================="

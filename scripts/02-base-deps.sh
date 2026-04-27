@@ -14,13 +14,13 @@ log()  { printf '\033[1;34m[02-base-deps]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m  ✅\033[0m %s\n' "$*"; }
 err()  { printf '\033[1;31m  ❌\033[0m %s\n' "$*" >&2; }
 
-PKGS=(curl ca-certificates git build-essential)
+PKGS=(curl ca-certificates git build-essential at)
 
 # 缺啥
 MISSING=()
 for p in "${PKGS[@]}"; do
   case "$p" in
-    curl|git)
+    curl|git|at)
       command -v "$p" >/dev/null 2>&1 || MISSING+=("$p")
       ;;
     *)
@@ -57,7 +57,7 @@ log "sudo apt-get install -y --no-install-recommends ${MISSING[*]}"
 # 校验
 for p in "${MISSING[@]}"; do
   case "$p" in
-    curl|git)
+    curl|git|at)
       command -v "$p" >/dev/null 2>&1 || { err "$p 装完仍找不到"; exit 1; }
       ;;
     *)
@@ -66,5 +66,16 @@ for p in "${MISSING[@]}"; do
   esac
   ok "$p 安装完成"
 done
+
+# 启用 atd（08-ssh-harden 的 deadman 依赖）
+if command -v at >/dev/null 2>&1; then
+  if ! "${SUDO[@]}" systemctl is-active --quiet atd 2>/dev/null \
+       && ! "${SUDO[@]}" systemctl is-active --quiet at-daemon 2>/dev/null; then
+    log "启用 atd 服务"
+    "${SUDO[@]}" systemctl enable --now atd 2>/dev/null || \
+      "${SUDO[@]}" systemctl enable --now at-daemon 2>/dev/null || \
+      log "atd 启用失败（08-ssh-harden 用到时再处理）"
+  fi
+fi
 
 log "完成"

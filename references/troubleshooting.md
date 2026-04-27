@@ -120,7 +120,61 @@ rm -rf ~/.local/bin/claude ~/.config/claude
 
 ---
 
-## 8. 我想在 *别的* 机器上重新跑一次, 完全一致
+## 8. SSH 加固完, 新端口登不上 / 锁出去了
+
+### 你还连着旧 SSH 会话（最常见, 最好处理）
+什么都别做, 等 deadman 自动回滚（默认 5 分钟内）。窗口期内你也可以手动：
+```bash
+bash ~/server-bootstrap/scripts/08-ssh-harden.sh rollback
+```
+回滚后 sshd 回到加固前的状态, 旧连接和旧端口又能用了。
+
+### 你已经断线了（但 deadman 还没触发）
+- **如果 deadman 设了**：等到 `--rollback-after-minutes` 分钟（默认 5）后再试旧端口, 应该能连上。
+- **如果你跑了 `--no-deadman`**：你需要带外访问（云厂商 console / 物理键盘 / IPMI）。进系统后：
+  ```bash
+  sudo bash ~/server-bootstrap/scripts/08-ssh-harden.sh rollback
+  ```
+
+### 云防火墙 / 安全组没放新端口（最常见低级失误）
+sshd 在新端口 listen 了, 但云防火墙没放行 → 包到不了。先去云控制台：
+- AWS: EC2 → Security Groups → Inbound rules → Add rule (TCP, 你的新端口)
+- 阿里云: 安全组 → 入方向规则
+- 腾讯云: 安全组 → 入站规则
+- GCP: VPC firewall rules
+
+加好规则后重试 `ssh -p <新端口> ...`。
+
+### 还是不行, 想完全恢复成「加固前」
+```bash
+# 找最近的备份
+sudo ls -1t /var/backups/sshd-bootstrap/sshd-*.tar.gz | head
+# 解开
+sudo tar xzf /var/backups/sshd-bootstrap/sshd-<时间戳>.tar.gz -C /
+# 校验 + 重载
+sudo sshd -t && sudo systemctl reload sshd
+```
+
+---
+
+## 9. zsh 装好了但提示 `command not found: <something>`
+oh-my-zsh 装好后默认 plugin 列表只有 git。02b-zsh.sh 会自动追加 sudo / zsh-syntax-highlighting / zsh-autosuggestions, 但前提是 ~/.zshrc 有 `plugins=(...)` 那一行。如果你看到插件没生效：
+1. 看 `~/.zshrc` 里的 `plugins=` 行内容
+2. 缺啥补啥, 例如：
+   ```bash
+   plugins=(git sudo zsh-syntax-highlighting zsh-autosuggestions)
+   ```
+3. 重新 source: `source ~/.zshrc`
+
+如果你的 nvm 加载失效（升级 oh-my-zsh 后偶尔会发生）：检查 ~/.zshrc 末尾是不是少了：
+```bash
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+```
+
+---
+
+## 10. 我想在 *别的* 机器上重新跑一次, 完全一致
 
 只要：
 ```bash

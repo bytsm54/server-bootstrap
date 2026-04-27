@@ -48,10 +48,17 @@ claude   # 登录
 |---|---|---|
 | `node_version` | `lts` | nvm install 的 Node 版本, 如 `lts`、`20`、`22.5.0` |
 | `npm_registry` | `official` | `china` (npmmirror.com) 或 `official` (npmjs.org) |
+| `install_zsh` | `false` | true 时进入 phase 02b：装 zsh + oh-my-zsh + 设默认 shell |
 | `project_repo_url` | （空, 跳过 phase 06） | 要克隆的项目 git URL |
 | `project_dir` | `~/<repo basename>` | 克隆目标路径 |
 | `project_env_keys` | （空） | 项目需要的环境变量 key 列表（如 `TUSHARE_TOKEN,OPENAI_API_KEY`）, phase 06 会**引导用户填到 `.env`**, 不写 `~/.zshrc` |
 | `install_plugins_skills` | `false` | 是否进入 phase 07; true 时 agent 会展示 `templates/*.yaml` 让用户挑选 |
+| `harden_ssh` | `false` | **高风险**, 是否进入 phase 08。下面参数仅 `harden_ssh=true` 时需要 |
+| `ssh_port` | （必填若 harden_ssh） | 1024-65535, 不能是 22 |
+| `ssh_allow_users` | （必填若 harden_ssh） | 逗号分隔, 如 `ubuntu,bytsm54` |
+| `ssh_permit_root` | `no` | `no` 或 `yes` |
+| `ssh_password_auth` | `no` | `no` 或 `yes`. 选 `no` 时脚本会校验 `allow_users` 都有 `authorized_keys`, 否则拒绝执行（避免锁死） |
+| `ssh_rollback_after_minutes` | `5` | deadman 自动回滚窗口 |
 
 ---
 
@@ -60,12 +67,14 @@ claude   # 登录
 | # | Phase | 脚本 | 需要 sudo? | 默认 |
 |---|---|---|---|---|
 | 01 | 环境检查 | `scripts/01-preflight.sh` | 仅检测 | 必跑 |
-| 02 | apt 基础依赖 | `scripts/02-base-deps.sh` | ✅ 仅此 phase, 已装则整体跳过 | 必跑 |
+| 02 | apt 基础依赖 | `scripts/02-base-deps.sh` | ✅ | 必跑, 已装则整体跳过 |
+| 02b | zsh + oh-my-zsh | `scripts/02b-zsh.sh` | ✅（apt + chsh） | `install_zsh=true` 才跑 |
 | 03 | nvm + Node | `scripts/03-node.sh` | ❌ 用户态 | 必跑 |
 | 04 | Claude Code CLI | `scripts/04-claude-code.sh` | ❌ 用户态 | 必跑 |
 | 05 | git 身份 | `scripts/05-git-identity.sh` | ❌ | 必跑 |
 | 06 | 项目克隆 + 依赖 | `scripts/06-project.sh` | ❌ | `project_repo_url` 提供时才跑 |
 | 07 | plugins / skills | `scripts/07-plugins-skills.sh` | ❌ | `install_plugins_skills=true` 才跑 |
+| 08 | **SSH 加固** | `scripts/08-ssh-harden.sh` | ✅ | `harden_ssh=true` 才跑, **必须按下方对话流程**执行 |
 | -- | 总检查 | `scripts/verify.sh` | ❌ | 必跑 |
 
 每个脚本都是**幂等**的——重跑只会跳过已完成的部分。可以单独调用任意一个 phase, 不强制走完整序列。
@@ -110,6 +119,12 @@ export REPO_DIR="${REPO_DIR:-$HOME/server-bootstrap}"
 
 bash "$REPO_DIR/scripts/01-preflight.sh"
 bash "$REPO_DIR/scripts/02-base-deps.sh"
+
+# 可选 phase 02b（必须在 03-node 之前跑, 让 .zshrc 创建顺序对）
+if [ "${install_zsh:-false}" = "true" ]; then
+  bash "$REPO_DIR/scripts/02b-zsh.sh"
+fi
+
 bash "$REPO_DIR/scripts/03-node.sh"        --node-version "${node_version:-lts}" --npm-registry "${npm_registry:-official}"
 bash "$REPO_DIR/scripts/04-claude-code.sh"
 bash "$REPO_DIR/scripts/lib/with-env.sh" -- bash "$REPO_DIR/scripts/05-git-identity.sh" --name "$git_user_name" --email "$git_user_email"
@@ -129,6 +144,11 @@ if [ "${install_plugins_skills:-false}" = "true" ]; then
     --plugins-yaml "$REPO_DIR/templates/plugins.yaml" \
     --skills-yaml  "$REPO_DIR/templates/skills.yaml" \
     --selection "$selection_json"  # 见下
+fi
+
+# 可选 phase 08：高风险, 必须按下方「Phase 08 强制对话流程」执行, 不要"一气呵成"
+if [ "${harden_ssh:-false}" = "true" ]; then
+  : # 见下文「Phase 08 强制对话流程」
 fi
 
 bash "$REPO_DIR/scripts/lib/with-env.sh" -- bash "$REPO_DIR/scripts/verify.sh"
@@ -157,6 +177,71 @@ bash "$REPO_DIR/scripts/lib/with-env.sh" -- bash "$REPO_DIR/scripts/verify.sh"
 
 ---
 
+### Phase 08 强制对话流程（高风险, 不要跳过任何步骤）
+
+**Phase 08 不允许"一气呵成"自动执行。** Agent 必须严格按下面 5 步走, 任何一步用户没明确确认就停下等待。
+
+**步骤 1 — 念警告（必读）**
+
+完整复制以下文字给用户, **逐字念**, 不要简化：
+
+> 我即将修改 sshd 配置：
+> - 端口 → `${ssh_port}`
+> - 允许用户 → `${ssh_allow_users}`
+> - PermitRootLogin → `${ssh_permit_root}`
+> - PasswordAuthentication → `${ssh_password_auth}`
+>
+> 修改会**立刻生效**（systemctl reload sshd, 当前 SSH 会话不会断）。
+>
+> 同时我会调度一个 **${ssh_rollback_after_minutes} 分钟的 deadman**：
+> 如果在窗口内你没回来确认能用新端口登录, 系统会**自动回滚**到当前配置。
+>
+> **执行前请你做两件事**：
+> 1. 如果这台机器在云平台（AWS / 阿里云 / 腾讯云 / GCP 等）, 现在就去把端口
+>    `${ssh_port}` 加进入站安全组规则, 否则即使 sshd 接受连接, 包也到不了。
+> 2. 现在另开一个终端窗口（不要关闭当前这个）, 准备好命令：
+>    `ssh -p ${ssh_port} <user>@<this-host>`
+>
+> 你已准备好了吗？请回复 **"已准备"** 继续, 或 **"取消"** 终止 phase 08。
+
+**步骤 2 — 等用户回应**
+
+- 用户回 "已准备" → 进步骤 3
+- 用户回 "取消" 或任何犹豫 → 直接 return, 不调脚本, 告诉用户 phase 08 已跳过
+- 用户没正面回答 → **不要继续**, 重念一遍警告
+
+**步骤 3 — 调用 apply**
+
+```bash
+"${SUDO[@]}" bash "$REPO_DIR/scripts/08-ssh-harden.sh" apply \
+  --port "$ssh_port" \
+  --allow-users "$ssh_allow_users" \
+  --permit-root "${ssh_permit_root:-no}" \
+  --password-auth "${ssh_password_auth:-no}" \
+  --rollback-after-minutes "${ssh_rollback_after_minutes:-5}"
+```
+
+apply 已经做了：备份 + 写新配置 + sshd -t + reload + 调度 deadman。退出码非 0 就立即停, **不要尝试 confirm**, 让 deadman 兜底（或你手动 rollback）。
+
+**步骤 4 — 让用户在另一个终端验证**
+
+把脚本最后打印的"下一步"原样转给用户：
+
+> 现在请在另一个终端尝试：`ssh -p ${ssh_port} <user>@<host>`
+>
+> 登上来了 → 回这边回复 **"成功"**
+> 登不上 / 没反应 → 回这边回复 **"失败"**, 或者什么都不做等 ${ssh_rollback_after_minutes} 分钟自动回滚
+
+**步骤 5 — 根据回应处理**
+
+- 用户回 "成功"：调 `bash $REPO_DIR/scripts/08-ssh-harden.sh confirm` 取消 deadman, 报告"加固成功"
+- 用户回 "失败"：调 `bash $REPO_DIR/scripts/08-ssh-harden.sh rollback` 立即回滚, 报告"已回滚, 当前用回旧配置"
+- 用户没回应、超过窗口期：deadman 已自动 rollback, agent 主动提醒用户"已自动回滚"
+
+无论哪条分支, **都要紧接着调一次 verify.sh**, 确认 sshd 当前真实状态。
+
+---
+
 ## 完成后
 
 `verify.sh` 会打印一段总结：
@@ -177,7 +262,7 @@ bash "$REPO_DIR/scripts/lib/with-env.sh" -- bash "$REPO_DIR/scripts/verify.sh"
 
 ## 不在本 skill 范围内（明确划清）
 
-- **SSH 加固 / 改端口 / fail2ban**：风险高（容易锁死自己）, 单独成一个 skill 更合适。本 skill 不碰 sshd 配置。
+- **fail2ban / 入侵检测 / WAF**：本 skill 的 SSH 加固 phase 08 仅做配置层（端口 / 允许用户 / 禁密码 / 禁 root）, 不装 fail2ban 类运行时防御。
 - **域名 / 反代 / nginx / Docker**：超出"开发环境就绪"范畴。
 - **数据库安装**：项目自决, 用 `06-project.sh` 检测到 `docker-compose.yml` 时仅提示, 不自动执行。
 - **secret 写到 shell rc**：所有 token / API key 都引导用户写到 `<project>/.env`（且 gitignore 它）, 永不写 `~/.zshrc` / `~/.bashrc`。

@@ -7,7 +7,8 @@
 - ✅ 每个 phase 都**幂等**, 可重跑、可单独跑
 - ✅ Plugin / skill 安装**默认关闭**, 由用户从清单中明确挑选
 - ✅ Token / 环境变量永远写到项目 `.env`, **不**塞进 `~/.zshrc`
-- ✅ **不**碰 sshd / 防火墙（避免把自己锁出来, 那是另一个 skill 的事）
+- ✅ zsh + oh-my-zsh **可选** phase（默认关闭, 设 `install_zsh=true` 才装）
+- ✅ SSH 加固 **可选** phase（默认关闭, 自带 deadman 自动回滚 + 双终端验证流程, 不会把你锁出去）
 
 ---
 
@@ -40,12 +41,14 @@ server-bootstrap/
 ├── scripts/
 │   ├── bootstrap.sh             # 一键入口（curl | bash 用）
 │   ├── 01-preflight.sh          # OS / 网络 / sudo 检测
-│   ├── 02-base-deps.sh          # apt 依赖（唯一可能 sudo 的 phase）
+│   ├── 02-base-deps.sh          # apt 依赖（含 at, 用于 phase 08 deadman）
+│   ├── 02b-zsh.sh               # 可选：zsh + oh-my-zsh + 设默认 shell
 │   ├── 03-node.sh               # nvm + Node LTS（用户态）
 │   ├── 04-claude-code.sh        # Claude Code CLI（用户态）
 │   ├── 05-git-identity.sh       # git 全局身份
 │   ├── 06-project.sh            # 可选：clone + 装语言依赖 + 引导写 .env
 │   ├── 07-plugins-skills.sh     # 可选：按 yaml 选项装 plugin / skill
+│   ├── 08-ssh-harden.sh         # 可选：SSH 加固（apply/confirm/rollback 三模式 + deadman）
 │   ├── verify.sh                # 总检查 + 摘要
 │   └── lib/
 │       └── with-env.sh          # 包装：自动 source nvm + 加 PATH
@@ -87,7 +90,7 @@ bash ~/server-bootstrap/scripts/lib/with-env.sh -- bash ~/server-bootstrap/scrip
 
 | 项目 | 为什么 |
 |---|---|
-| SSH 加固 / 改端口 / fail2ban | 风险高、单独成 skill 更合适 |
+| fail2ban / WAF / 入侵检测 | 本 skill 的 SSH 加固只到配置层, 运行时防御另开 skill |
 | nginx / 反代 / 域名 | 项目级问题, 不通用 |
 | Docker / k8s 安装 | 项目自决 |
 | 写 secret 到 `~/.zshrc` | 不安全, 引导写到 `<project>/.env` 即可 |

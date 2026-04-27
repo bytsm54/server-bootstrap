@@ -1,0 +1,61 @@
+# server-bootstrap — skills 推荐清单（仅作示例, 默认不会自动安装任何一项）
+#
+# 同 plugins.yaml：phase 07 会把这份清单展示给用户, 由用户选择。
+#
+# install 字段直接拼接到 `npx skills add <install> -g -y`, 所以可以是：
+#   - "<owner>/<repo>"                 仓库根 SKILL.md
+#   - "<owner>/<repo>@<skill>"         仓库 skills/<skill>/SKILL.md
+
+skills:
+  - id: skill-creator
+    install: anthropics/skills@skill-creator
+    description: Anthropic 官方, 用于创建 / 改进 / 评测 skill
+    side_effects: 无
+
+  - id: skill-vetter
+    install: useai-pro/openclaw-skills-security@skill-vetter
+    description: 安装第三方 skill 前的安全审查（推荐配合 claude-mem 用）
+    side_effects: 无（只读分析）
+
+  - id: frontend-design
+    install: anthropics/skills@frontend-design
+    description: 前端设计 / UI 实现指导
+    side_effects: 无
+
+  - id: docx
+    install: anthropics/skills@docx
+    description: Word 文档读写
+    side_effects: 无
+
+  - id: pdf
+    install: anthropics/skills@pdf
+    description: PDF 解析与读写
+    side_effects: 无
+
+  - id: xlsx
+    install: anthropics/skills@xlsx
+    description: Excel 文档读写
+    side_effects: 无
+
+  - id: pptx
+    install: anthropics/skills@pptx
+    description: PowerPoint 文档读写
+    side_effects: 无
+
+  - id: context7
+    install: intellectronica/agent-skills@context7
+    description: 通过 Context7 检索最新文档
+    side_effects: 调用第三方服务（context7.com）
+
+  - id: find-skills
+    install: vercel-labs/skills@find-skills
+    description: 在大量已装 skill 中按描述搜索
+    side_effects: 无
+
+  - id: tushare-data
+    install: waditu-tushare/skills@tushare
+    description: A 股 / 财务 / 行情数据自然语言查询（中文场景, 需要 TUSHARE_TOKEN）
+    side_effects: 调用 Tushare API, 受积分 / 频率 / 配额限制。
+
+# 添加自定义 skill：在 phase 07 的 selection.extra_skills 里传字符串,
+# 例如：["my-org/my-skills@my-skill"]

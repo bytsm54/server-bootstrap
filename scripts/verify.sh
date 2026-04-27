@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# verify.sh — 总检查, 打印一段摘要供 agent 转述给用户
+
+set -uo pipefail   # 注意：这里不用 -e, 我们要把所有项都跑一遍, 不在中途 abort
+
+ok()   { printf '  ✅ %s\n' "$*"; }
+miss() { printf '  ❌ %s\n' "$*"; }
+warn() { printf '  ⚠️  %s\n' "$*"; }
+
+echo "=========================="
+echo " server-bootstrap verify"
+echo "=========================="
+
+# nvm + node
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" 2>/dev/null
+
+if command -v node >/dev/null 2>&1; then
+  ok "Node:       $(node --version)"
+else
+  miss "Node:       未找到（试 source ~/.nvm/nvm.sh 或用 with-env.sh 包装）"
+fi
+
+if command -v npm >/dev/null 2>&1; then
+  ok "npm:        $(npm --version)  registry=$(npm config get registry)"
+else
+  miss "npm:        未找到"
+fi
+
+# claude
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) export PATH="$HOME/.local/bin:$PATH" ;;
+esac
+if command -v claude >/dev/null 2>&1; then
+  ok "Claude Code: $(claude --version 2>/dev/null || echo 'version unknown')"
+else
+  miss "Claude Code: 未找到（应在 ~/.local/bin/claude）"
+fi
+
+# git identity
+GN="$(git config --global user.name  2>/dev/null || true)"
+GE="$(git config --global user.email 2>/dev/null || true)"
+if [ -n "$GN" ] && [ -n "$GE" ]; then
+  ok "git:        $GN <$GE>"
+else
+  miss "git:        全局身份未配置（跑 05-git-identity.sh）"
+fi
+
+# plugins / skills 统计
+PLUGINS_FILE="$HOME/.claude/plugins/installed_plugins.json"
+if [ -f "$PLUGINS_FILE" ]; then
+  COUNT="$(python3 -c "import json,sys; d=json.load(open('$PLUGINS_FILE')); print(len(d.get('plugins',[])))" 2>/dev/null || echo '?')"
+  ok "Plugins:    $COUNT installed"
+else
+  warn "Plugins:    无 installed_plugins.json（可能没装过 plugin, 或 Claude Code 还没初始化）"
+fi
+
+SKILLS_DIR="$HOME/.claude/skills"
+if [ -d "$SKILLS_DIR" ]; then
+  COUNT="$(find "$SKILLS_DIR" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) | wc -l | tr -d ' ')"
+  ok "Skills:     $COUNT in $SKILLS_DIR"
+else
+  warn "Skills:     $SKILLS_DIR 不存在"
+fi
+
+# uv（如果项目用了 Python）
+if command -v uv >/dev/null 2>&1; then
+  ok "uv:         $(uv --version)"
+fi
+
+echo "=========================="
+echo " done"
+echo "=========================="

@@ -1,0 +1,43 @@
+# server-bootstrap — plugins 推荐清单（仅作示例, 默认不会自动安装任何一项）
+#
+# Phase 07 (07-plugins-skills.sh) 会让 agent 把这份清单完整呈现给用户,
+# 由用户明确选择哪些要装。每个条目的 side_effects 必须读给用户听,
+# 让他做 informed choice。
+#
+# 字段说明：
+#   id           安装命令简短标识（agent 用它对照用户选择）
+#   install      传给 `claude plugins install` 的字符串
+#   description  一句话功能描述
+#   side_effects 副作用 / 隐私 / 性能注意。"无" 表示无副作用
+#
+# 增删条目：直接编辑此文件即可, 不需要改任何脚本。
+
+plugins:
+  - id: superpowers
+    install: superpowers@claude-plugins-official
+    description: 通用工作流增强（brainstorming / TDD / debugging / 计划与执行 等系列 skills）
+    side_effects: 无（仅增加可用 skill）
+
+  - id: claude-mem
+    install: claude-mem@thedotmack
+    description: 跨会话持久化记忆 + 搜索
+    side_effects: ⚠️ 会自动记录所有会话内容到本地数据库, 并在每次会话启动时把摘要塞进上下文。
+                 隐私敏感, 慎选。
+
+  - id: claude-hud
+    install: claude-hud@jarrodwatts
+    description: 终端状态栏 HUD（显示 token 用量等）
+    side_effects: 修改 ~/.claude/settings.json 的 statusLine 配置。
+
+  - id: web-access
+    install: web-access@web-access
+    description: 让 Claude Code 通过工具访问网页内容
+    side_effects: 无（按需调用）
+
+  - id: pua
+    install: pua@pua-skills
+    description: 第三方 PUA skills 集合（特定中文场景）
+    side_effects: 个性化倾向较强, 多数项目用不上。
+
+# 添加自定义 plugin：可以在 phase 07 的 selection.extra_plugins 里直接传字符串,
+# 不必修改本 yaml, 例如：["custom-plugin@some-marketplace"]

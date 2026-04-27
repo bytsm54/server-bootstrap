@@ -1,0 +1,13 @@
+# Local scratch / runtime artifacts (none expected, but defensive)
+*.log
+*.tmp
+.DS_Store
+
+# Env files that might land here during testing
+.env
+.env.*
+!.env.example
+
+# Editor
+.vscode/
+.idea/

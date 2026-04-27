@@ -55,27 +55,60 @@ bash "$REPO_DIR/scripts/03-node.sh" --node-version "${NODE_VERSION:-lts}" --npm-
 log "Phase 04 — Claude Code CLI（用户态, 默认从 GitHub releases 直下二进制, 不经 Cloudflare）"
 bash "$REPO_DIR/scripts/04-claude-code.sh" --method "${CLAUDE_INSTALL_METHOD:-auto}" ${CLAUDE_VERSION:+--version "$CLAUDE_VERSION"}
 
-# --- 4. 给出下一步指引
+# --- 4. 给出下一步指引（注意：heredoc 不展开 \033 转义, 所以用 printf 输出彩色行）
+
+# 探测当前 claude / node（如果当前 shell 没 source nvm, 这俩可能都找不到, 这是预期）
+NODE_VER="(当前 shell 未加载 nvm; 退出重登或 source ~/.nvm/nvm.sh 后可见)"
+CLAUDE_VER="(同上)"
+[ -s "$HOME/.nvm/nvm.sh" ] && (
+  . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1
+  command -v node >/dev/null 2>&1 && node --version
+) >/tmp/.bootstrap-node-ver 2>/dev/null && NODE_VER=$(cat /tmp/.bootstrap-node-ver) && rm -f /tmp/.bootstrap-node-ver
+[ -x "$HOME/.local/bin/claude" ] && CLAUDE_VER=$("$HOME/.local/bin/claude" --version 2>/dev/null || echo "已装但无法 --version")
+
+printf '\n\033[1;32m✅ bootstrap.sh 完成\033[0m\n\n'
+
 cat <<EOF
+已装：
+  - 系统依赖 (apt + at)
+  - Node:        $NODE_VER
+  - Claude Code: $CLAUDE_VER ($HOME/.local/bin/claude)
 
-\033[1;32m✅ bootstrap.sh 完成\033[0m
+EOF
 
-下一步：
+printf '\033[1;33m接下来 (任选一种, 让当前/新 shell 加载 nvm 和 ~/.local/bin):\033[0m\n\n'
 
-  1) 重新登录 / 加载 nvm（让当前 shell 拿到 node + claude）：
-       source ~/.nvm/nvm.sh
-       export PATH="\$HOME/.local/bin:\$PATH"
+cat <<EOF
+  ① 推荐：退出再连一次 SSH （新会话会自动加载, 最干净）
+       exit
+       ssh <user>@<host>
+       claude --version    # 应该看到版本号
 
-  2) 启动 Claude Code 并登录：
+  ② 当前 shell 替换成 login shell （不用退 SSH, 当前 bash 重启）
+       exec bash -l
+       claude --version
+
+  ③ 手动 source 一次 （不重启 shell, 立即生效）
+       source ~/.nvm/nvm.sh && export PATH="\$HOME/.local/bin:\$PATH"
+       claude --version
+
+为什么不能让脚本自动做这一步？
+  bootstrap.sh 是你 shell 的子进程, 子进程 export 出来的环境变量
+  随子进程退出而消失, 父 shell 拿不到 — 这是 POSIX shell 的根本
+  设计, 不是脚本 bug。任何 "curl ... | bash" 模式都有同样限制。
+
+完成上面任一步骤后:
+
+  1) 启动 Claude Code 并登录：
        claude
 
-  3) 在 claude 会话里说：
+  2) 在 claude 会话里说：
        "执行 server-bootstrap, git_user_name=Your Name, git_user_email=you@example.com"
 
-     它会读 \$HOME/server-bootstrap/SKILL.md 走完剩下的 phase
-     （git 身份, 可选项目克隆, 可选 plugin / skill, 总检查）。
+     SKILL.md 会走完剩下的 phase
+     （02a hostname/timezone, 02b zsh, 05 git 身份, 06 项目克隆,
+       07 plugin/skill, 08 SSH 加固, 总检查 — 各 phase 默认行为见 SKILL.md）
 
   也可以脱离 SKILL 单独跑某个 phase, 例如：
        bash $REPO_DIR/scripts/05-git-identity.sh --name "..." --email "..."
-
 EOF

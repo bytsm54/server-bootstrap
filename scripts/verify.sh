@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # verify.sh — 总检查, 打印一段摘要供 agent 转述给用户
 
-set -uo pipefail   # 注意：这里不用 -e, 我们要把所有项都跑一遍, 不在中途 abort
+# 不用 -e: 我们要把所有项都跑一遍, 不在中途 abort
+# 不用 -u: nvm.sh 在 set -u 下会因 PROVIDED_VERSION 等未初始化变量挂掉
+set -o pipefail
 
 ok()   { printf '  ✅ %s\n' "$*"; }
 miss() { printf '  ❌ %s\n' "$*"; }

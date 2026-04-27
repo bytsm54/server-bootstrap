@@ -12,7 +12,8 @@
 # 为什么需要：Claude Code 的 Bash tool 每次起新 bash, 不会 source 你的 ~/.zshrc 或
 # ~/.bashrc, nvm 不会自动加载, claude 也不在 PATH 里。这个包装解决这两件事。
 
-set -euo pipefail
+# 不用 -u: 一些 nvm 内部代码路径（如 PROVIDED_VERSION）在 set -u 下会挂掉。
+set -eo pipefail
 
 # --- 加载 nvm（如果存在）
 export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"

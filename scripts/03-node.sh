@@ -9,7 +9,10 @@
 #   - 目标 node 版本已装 → 仅 nvm use
 #   - 设置/取消 npm 镜像也是幂等的
 
-set -euo pipefail
+# 注意：故意不用 -u（set -u）。nvm 内部有代码路径引用未初始化的 PROVIDED_VERSION
+# 等变量, 在 -u 下会触发 "unbound variable" 中断 nvm install。这是 nvm 已知的兼容
+# 性问题（见 nvm-sh/nvm 多个 issue）。我们仍保留 -e 和 -o pipefail。
+set -eo pipefail
 
 log()  { printf '\033[1;34m[03-node]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m  ✅\033[0m %s\n' "$*"; }

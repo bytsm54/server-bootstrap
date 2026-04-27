@@ -63,6 +63,27 @@ bash <(curl -fsSL https://raw.githubusercontent.com/bytsm54/server-bootstrap/mai
 
 ---
 
+## 3b. `bootstrap.sh` 跑到 phase 03 报 `PROVIDED_VERSION: unbound variable`
+
+这是 nvm 在严格模式 (`set -u`) 下的已知问题——nvm.sh 内部少数代码路径会引用未初始化变量。本仓库 ≥ commit 修复后已经移除 `-u`, 如果你看到这个错, 多半是你跑的是旧版 bootstrap.sh。
+
+恢复方法（不需要等修复）：
+```bash
+source ~/.nvm/nvm.sh         # 当前 shell 加载 nvm
+node -v                      # 应该有版本号
+bash ~/server-bootstrap/scripts/04-claude-code.sh
+export PATH="$HOME/.local/bin:$PATH"
+claude --version
+```
+
+或者拉最新仓库再跑一次 bootstrap.sh（幂等）：
+```bash
+git -C ~/server-bootstrap pull --ff-only
+bash ~/server-bootstrap/scripts/bootstrap.sh
+```
+
+---
+
 ## 4. nvm 装完了, 但 `nvm` 命令不存在
 
 **原因**：nvm 装到 `~/.nvm`, 通过 source `~/.nvm/nvm.sh` 加载到 shell function 里, 不是真正的可执行文件。

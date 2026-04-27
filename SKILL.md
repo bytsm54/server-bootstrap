@@ -50,7 +50,8 @@ claude   # 登录
 | `timezone` | （空, 跳过） | 设时区, 如 `Asia/Shanghai`、`UTC`、`America/New_York` |
 | `node_version` | `lts` | nvm install 的 Node 版本, 如 `lts`、`20`、`22.5.0` |
 | `npm_registry` | `official` | `china` (npmmirror.com) 或 `official` (npmjs.org)。**中国大陆用户强烈建议设 `china`** |
-| `claude_install_method` | `auto` | `auto`（curl 失败回落 npm） / `curl`（仅 claude.ai 官方）/ `npm`（仅 npm 包）。中国大陆 curl 一般 403, auto 会自动走 npm |
+| `claude_install_method` | `auto` | `auto`（github 失败回落 curl）/ `github`（GitHub releases 直下二进制, **国内推荐**, 走 github.com 不经 Cloudflare）/ `curl`（claude.ai/install.sh, 国内常 403）。**npm 方式已被 Anthropic 弃用, 本 skill 不再提供** |
+| `claude_version` | （空）= latest | 显式钉版本如 `v2.1.119`, 跳过 GitHub API 查询（API 60 次/小时限流时有用） |
 | `install_zsh` | `false` | true 时进入 phase 02b：装 zsh + oh-my-zsh + 设默认 shell |
 | `zsh_theme` | `agnoster` | 仅 `install_zsh=true` 时生效, 任何 oh-my-zsh 内置主题名都行 |
 | `project_repo_url` | （空, 跳过 phase 06） | 要克隆的项目 git URL |
@@ -138,7 +139,7 @@ if [ "${install_zsh:-false}" = "true" ]; then
 fi
 
 bash "$REPO_DIR/scripts/03-node.sh"        --node-version "${node_version:-lts}" --npm-registry "${npm_registry:-official}"
-bash "$REPO_DIR/scripts/04-claude-code.sh"  --method "${claude_install_method:-auto}"
+bash "$REPO_DIR/scripts/04-claude-code.sh"  --method "${claude_install_method:-auto}" ${claude_version:+--version "$claude_version"}
 bash "$REPO_DIR/scripts/lib/with-env.sh" -- bash "$REPO_DIR/scripts/05-git-identity.sh" --name "$git_user_name" --email "$git_user_email"
 
 # 可选 phase 06

@@ -63,9 +63,16 @@ check_url() {
 }
 
 if command -v curl >/dev/null 2>&1; then
-  check_url "https://github.com"          "GitHub"
-  check_url "https://registry.npmjs.org"  "npm 官方"
-  check_url "https://claude.ai"           "Claude"
+  check_url "https://github.com"                  "GitHub (Claude Code 二进制下载源)"
+  check_url "https://api.github.com"              "GitHub API (查询最新版本用)"
+  check_url "https://registry.npmjs.org"          "npm 官方"
+  # claude.ai 对 curl 全球 403, 这里探测无意义, 仅作信息（warn 不阻塞）
+  if curl -fsSL --max-time 5 -o /dev/null -I https://claude.ai 2>/dev/null; then
+    ok "可访问 claude.ai (curl 通过, 你这个网络/IP 不在 Cloudflare 拦截范围)"
+  else
+    warn "claude.ai 对 curl 通常 403（Cloudflare TLS 指纹限制, 任意服务器都会撞）"
+    warn "  → 不影响安装, 04-claude-code 默认从 github releases 直下二进制"
+  fi
 else
   warn "curl 未安装, 跳过网络探测（02-base-deps 会装上）"
 fi

@@ -52,8 +52,8 @@ bash "$REPO_DIR/scripts/02-base-deps.sh"
 log "Phase 03 — Node (via nvm, 用户态)"
 bash "$REPO_DIR/scripts/03-node.sh" --node-version "${NODE_VERSION:-lts}" --npm-registry "${NPM_REGISTRY:-official}"
 
-log "Phase 04 — Claude Code CLI（用户态, claude.ai 不可达时自动回落 npm）"
-bash "$REPO_DIR/scripts/04-claude-code.sh" --method "${CLAUDE_INSTALL_METHOD:-auto}"
+log "Phase 04 — Claude Code CLI（用户态, 默认从 GitHub releases 直下二进制, 不经 Cloudflare）"
+bash "$REPO_DIR/scripts/04-claude-code.sh" --method "${CLAUDE_INSTALL_METHOD:-auto}" ${CLAUDE_VERSION:+--version "$CLAUDE_VERSION"}
 
 # --- 4. 给出下一步指引
 cat <<EOF

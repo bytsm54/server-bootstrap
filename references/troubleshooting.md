@@ -84,36 +84,45 @@ bash ~/server-bootstrap/scripts/bootstrap.sh
 
 ---
 
-## 3c. Claude Code 安装时 curl 报 `error 403`（中国大陆典型）
+## 3c. Claude Code 安装时 curl 报 `error 403`（任意服务器都可能命中）
 
 ```
 [04-claude-code] 运行官方 install.sh
 curl: (22) The requested URL returned error: 403
 ```
 
-**原因**：`claude.ai` 在中国大陆地区被 Anthropic / Cloudflare 限流, 直接访问会返回 403。
+**原因**：`claude.ai/install.sh` 走 Cloudflare, 对非浏览器 TLS 指纹的请求一律 403, **跟地区无关, 任何 curl 都打不通**（用浏览器访问能看到脚本内容, 是因为 TLS handshake 不同）。换 User-Agent 也没用, Cloudflare 还会校验 JA3。
+
+**这是已修复的设计缺陷**：04-claude-code.sh 默认 `--method auto`, 优先走 GitHub releases 直下二进制（不经 Cloudflare）。如果你看到这个 403, 多半是用了旧版仓库。
 
 **自动恢复**（拉新版后重跑）：
 ```bash
 git -C ~/server-bootstrap pull --ff-only
 bash ~/server-bootstrap/scripts/bootstrap.sh
 ```
-04-claude-code.sh 现在默认 `--method auto`：curl 失败会自动退回 `npm install -g @anthropic-ai/claude-code`。
 
-**手动恢复**（不想等重跑）：
+**手动恢复**（直接从 GitHub 下二进制）：
 ```bash
-source ~/.nvm/nvm.sh
-# 如果 npm 官方源也慢, 先切镜像:
-npm config set registry https://registry.npmmirror.com
-npm install -g @anthropic-ai/claude-code
+LATEST=$(curl -fsSL https://api.github.com/repos/anthropics/claude-code/releases/latest \
+         | python3 -c 'import sys,json; print(json.load(sys.stdin)["tag_name"])')
+ARCH=x64; [ "$(uname -m)" = "aarch64" ] && ARCH=arm64
+T=$(mktemp -d); cd "$T"
+curl -fsSL -O "https://github.com/anthropics/claude-code/releases/download/$LATEST/claude-linux-$ARCH.tar.gz"
+curl -fsSL -O "https://github.com/anthropics/claude-code/releases/download/$LATEST/SHASUMS256.txt"
+grep "claude-linux-$ARCH.tar.gz" SHASUMS256.txt | sha256sum -c -    # 校验
+tar -xzf claude-linux-$ARCH.tar.gz
+mkdir -p ~/.local/bin && install -m 0755 claude ~/.local/bin/
+export PATH="$HOME/.local/bin:$PATH"
 claude --version
 ```
 
-**长期建议**：在中国大陆服务器调用本 skill 时, 加上参数：
+**长期建议**：调用本 skill 时不必特别加参数, 默认就是 GitHub 路径。要强制时：
 ```
-npm_registry=china, claude_install_method=npm
+claude_install_method=github
 ```
-这样直接走 npm 镜像, 避开 curl 的 403。
+
+> npm 安装方式（`npm install -g @anthropic-ai/claude-code`）**已被 Anthropic 弃用**,
+> 不要再用。本 skill 已移除该路径。
 
 ---
 

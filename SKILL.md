@@ -46,9 +46,12 @@ claude   # 登录
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
+| `hostname` | （空, 跳过） | 设系统 hostname, 同步 /etc/hosts 127.0.1.1 行 |
+| `timezone` | （空, 跳过） | 设时区, 如 `Asia/Shanghai`、`UTC`、`America/New_York` |
 | `node_version` | `lts` | nvm install 的 Node 版本, 如 `lts`、`20`、`22.5.0` |
 | `npm_registry` | `official` | `china` (npmmirror.com) 或 `official` (npmjs.org) |
 | `install_zsh` | `false` | true 时进入 phase 02b：装 zsh + oh-my-zsh + 设默认 shell |
+| `zsh_theme` | `agnoster` | 仅 `install_zsh=true` 时生效, 任何 oh-my-zsh 内置主题名都行 |
 | `project_repo_url` | （空, 跳过 phase 06） | 要克隆的项目 git URL |
 | `project_dir` | `~/<repo basename>` | 克隆目标路径 |
 | `project_env_keys` | （空） | 项目需要的环境变量 key 列表（如 `TUSHARE_TOKEN,OPENAI_API_KEY`）, phase 06 会**引导用户填到 `.env`**, 不写 `~/.zshrc` |
@@ -68,6 +71,7 @@ claude   # 登录
 |---|---|---|---|---|
 | 01 | 环境检查 | `scripts/01-preflight.sh` | 仅检测 | 必跑 |
 | 02 | apt 基础依赖 | `scripts/02-base-deps.sh` | ✅ | 必跑, 已装则整体跳过 |
+| 02a | hostname + timezone | `scripts/02a-system.sh` | ✅（hostnamectl/timedatectl） | `hostname` 或 `timezone` 提供时才跑 |
 | 02b | zsh + oh-my-zsh | `scripts/02b-zsh.sh` | ✅（apt + chsh） | `install_zsh=true` 才跑 |
 | 03 | nvm + Node | `scripts/03-node.sh` | ❌ 用户态 | 必跑 |
 | 04 | Claude Code CLI | `scripts/04-claude-code.sh` | ❌ 用户态 | 必跑 |
@@ -120,9 +124,16 @@ export REPO_DIR="${REPO_DIR:-$HOME/server-bootstrap}"
 bash "$REPO_DIR/scripts/01-preflight.sh"
 bash "$REPO_DIR/scripts/02-base-deps.sh"
 
+# 可选 phase 02a（hostname / timezone 任一非空即跑）
+if [ -n "${hostname:-}" ] || [ -n "${timezone:-}" ]; then
+  bash "$REPO_DIR/scripts/02a-system.sh" \
+    ${hostname:+--hostname "$hostname"} \
+    ${timezone:+--timezone "$timezone"}
+fi
+
 # 可选 phase 02b（必须在 03-node 之前跑, 让 .zshrc 创建顺序对）
 if [ "${install_zsh:-false}" = "true" ]; then
-  bash "$REPO_DIR/scripts/02b-zsh.sh"
+  bash "$REPO_DIR/scripts/02b-zsh.sh" --theme "${zsh_theme:-agnoster}"
 fi
 
 bash "$REPO_DIR/scripts/03-node.sh"        --node-version "${node_version:-lts}" --npm-registry "${npm_registry:-official}"

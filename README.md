@@ -42,7 +42,8 @@ server-bootstrap/
 │   ├── bootstrap.sh             # 一键入口（curl | bash 用）
 │   ├── 01-preflight.sh          # OS / 网络 / sudo 检测
 │   ├── 02-base-deps.sh          # apt 依赖（含 at, 用于 phase 08 deadman）
-│   ├── 02b-zsh.sh               # 可选：zsh + oh-my-zsh + 设默认 shell
+│   ├── 02a-system.sh            # 可选：hostname + timezone
+│   ├── 02b-zsh.sh               # 可选：zsh + oh-my-zsh + 主题 + 默认 shell
 │   ├── 03-node.sh               # nvm + Node LTS（用户态）
 │   ├── 04-claude-code.sh        # Claude Code CLI（用户态）
 │   ├── 05-git-identity.sh       # git 全局身份

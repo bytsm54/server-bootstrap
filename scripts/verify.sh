@@ -11,6 +11,12 @@ echo "=========================="
 echo " server-bootstrap verify"
 echo "=========================="
 
+# hostname / timezone（信息性, 不算成败）
+HOST="$(hostnamectl --static 2>/dev/null || cat /etc/hostname 2>/dev/null || echo '?')"
+TZ_NOW="$(timedatectl show --property=Timezone --value 2>/dev/null || cat /etc/timezone 2>/dev/null || echo '?')"
+ok "hostname:   $HOST"
+ok "timezone:   $TZ_NOW ($(date '+%Y-%m-%d %H:%M:%S %z'))"
+
 # nvm + node
 export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" 2>/dev/null
@@ -76,6 +82,11 @@ if command -v zsh >/dev/null 2>&1; then
     ok "zsh:        $(zsh --version | awk '{print $2}') (默认 shell)"
   else
     ok "zsh:        $(zsh --version | awk '{print $2}') (非默认, 默认是 $USER_SHELL)"
+  fi
+  # 当前 ZSH_THEME（如果 ~/.zshrc 有）
+  if [ -f "$HOME/.zshrc" ] && grep -qE '^ZSH_THEME=' "$HOME/.zshrc"; then
+    THEME="$(grep -m1 -E '^ZSH_THEME=' "$HOME/.zshrc" | sed -E 's/^ZSH_THEME="?([^"]*)"?.*/\1/')"
+    ok "zsh theme:  $THEME"
   fi
 fi
 

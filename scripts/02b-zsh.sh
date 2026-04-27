@@ -2,17 +2,23 @@
 # 02b-zsh.sh — 可选 phase：装 zsh + 高亮 / 自动建议 + oh-my-zsh, 设默认 shell
 #
 # 用法：
-#   bash 02b-zsh.sh [--user $(whoami)] [--default-shell yes|no]
+#   bash 02b-zsh.sh [--user $(whoami)] [--default-shell yes|no] [--theme <name>]
 #
 # 行为：
 #   1. apt 装 zsh, zsh-syntax-highlighting, zsh-autosuggestions（已装则跳过）
 #   2. 装 oh-my-zsh 到 ~/.oh-my-zsh（用户态, 已存在则跳过, 不会覆盖 ~/.zshrc）
 #   3. 启用插件 git/sudo/zsh-syntax-highlighting/zsh-autosuggestions
-#   4. 默认 shell 改为 zsh（仅当 --default-shell yes, 默认 yes, 需要 sudo 走 chsh）
+#   4. 设 ZSH_THEME=<theme>（默认 agnoster, 任何 oh-my-zsh 内置主题名都行）
+#   5. 默认 shell 改为 zsh（仅当 --default-shell yes, 默认 yes, 需要 sudo 走 chsh）
 #
 # 顺序提醒：
 #   本 phase 应该在 03-node.sh 之前跑, 这样 nvm 的 ~/.zshrc 注入位于
 #   oh-my-zsh 模板之后, 不会被覆盖。
+#
+# agnoster 字体提示：
+#   agnoster 主题用 Powerline 字符, 需要你 *本地终端* 装一个 Powerline 兼容字体
+#   (推荐 MesloLGS NF / Hack Nerd Font / Source Code Pro for Powerline) 并在终端
+#   里选用, 否则箭头形状会变成乱码方块。服务器端无需配置。
 
 set -euo pipefail
 
@@ -23,13 +29,15 @@ err()  { printf '\033[1;31m  ❌\033[0m %s\n' "$*" >&2; }
 
 USER_NAME="$(id -un)"
 DEFAULT_SHELL="yes"
+ZSH_THEME_NAME="agnoster"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --user)          USER_NAME="$2"; shift 2 ;;
     --default-shell) DEFAULT_SHELL="$2"; shift 2 ;;
+    --theme)         ZSH_THEME_NAME="$2"; shift 2 ;;
     -h|--help)
-      echo "Usage: $0 [--user <name>] [--default-shell yes|no]"
+      echo "Usage: $0 [--user <name>] [--default-shell yes|no] [--theme <name>]"
       exit 0 ;;
     *) err "未知参数: $1"; exit 2 ;;
   esac
@@ -125,6 +133,36 @@ if [ -f "$ZSHRC" ]; then
       [ -f "$f" ] && echo "$srcline" >> "$ZSHRC"
     fi
   done
+
+  # 设 ZSH_THEME
+  THEME_FILE="$USER_HOME/.oh-my-zsh/themes/${ZSH_THEME_NAME}.zsh-theme"
+  if [ -d "$USER_HOME/.oh-my-zsh/themes" ] && [ ! -f "$THEME_FILE" ]; then
+    warn "主题 '$ZSH_THEME_NAME' 在 $USER_HOME/.oh-my-zsh/themes/ 找不到"
+    warn "继续设置, 但 zsh 启动时可能报错。检查拼写或自行下载主题文件。"
+  fi
+
+  if grep -qE '^ZSH_THEME=' "$ZSHRC"; then
+    CUR_THEME="$(grep -m1 -E '^ZSH_THEME=' "$ZSHRC" | sed -E 's/^ZSH_THEME="?([^"]*)"?.*/\1/')"
+    if [ "$CUR_THEME" = "$ZSH_THEME_NAME" ]; then
+      ok "ZSH_THEME 已是 $ZSH_THEME_NAME"
+    else
+      sed -i.bak -E "s|^ZSH_THEME=.*|ZSH_THEME=\"$ZSH_THEME_NAME\"|" "$ZSHRC"
+      ok "ZSH_THEME: $CUR_THEME → $ZSH_THEME_NAME"
+    fi
+  else
+    {
+      echo
+      echo "# Added by server-bootstrap 02b-zsh"
+      echo "ZSH_THEME=\"$ZSH_THEME_NAME\""
+    } >> "$ZSHRC"
+    ok "ZSH_THEME 已追加 = $ZSH_THEME_NAME"
+  fi
+
+  if [ "$ZSH_THEME_NAME" = "agnoster" ]; then
+    log "提示: agnoster 主题使用 Powerline 字符, 你的*本地终端*需要装一个"
+    log "      Powerline 兼容字体（推荐 MesloLGS NF / Hack Nerd Font）才能正常显示。"
+    log "      服务器端无需配置, 这是终端字体设置。"
+  fi
 else
   warn "~/.zshrc 不存在（oh-my-zsh 安装异常？）"
 fi

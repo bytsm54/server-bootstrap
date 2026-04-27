@@ -84,6 +84,39 @@ bash ~/server-bootstrap/scripts/bootstrap.sh
 
 ---
 
+## 3c. Claude Code 安装时 curl 报 `error 403`（中国大陆典型）
+
+```
+[04-claude-code] 运行官方 install.sh
+curl: (22) The requested URL returned error: 403
+```
+
+**原因**：`claude.ai` 在中国大陆地区被 Anthropic / Cloudflare 限流, 直接访问会返回 403。
+
+**自动恢复**（拉新版后重跑）：
+```bash
+git -C ~/server-bootstrap pull --ff-only
+bash ~/server-bootstrap/scripts/bootstrap.sh
+```
+04-claude-code.sh 现在默认 `--method auto`：curl 失败会自动退回 `npm install -g @anthropic-ai/claude-code`。
+
+**手动恢复**（不想等重跑）：
+```bash
+source ~/.nvm/nvm.sh
+# 如果 npm 官方源也慢, 先切镜像:
+npm config set registry https://registry.npmmirror.com
+npm install -g @anthropic-ai/claude-code
+claude --version
+```
+
+**长期建议**：在中国大陆服务器调用本 skill 时, 加上参数：
+```
+npm_registry=china, claude_install_method=npm
+```
+这样直接走 npm 镜像, 避开 curl 的 403。
+
+---
+
 ## 4. nvm 装完了, 但 `nvm` 命令不存在
 
 **原因**：nvm 装到 `~/.nvm`, 通过 source `~/.nvm/nvm.sh` 加载到 shell function 里, 不是真正的可执行文件。

@@ -33,7 +33,7 @@ claude   # 登录
 
 ## 参数
 
-第一次进入 skill 时, 一次性把下面的参数收齐再开始执行——不要中途反复打断用户。
+第一次进入 skill 时, 一次性把下面的参数收齐再开始执行——不要中途反复打断用户。**用户没主动提到的可选参数, 必须按下面"开场对话协议"把对应可选 phase 摆出来让用户选, 严禁默认跳过然后只在结尾才告诉用户跳过了什么。**
 
 ### 必填
 
@@ -64,6 +64,61 @@ claude   # 登录
 | `ssh_permit_root` | `no` | `no` 或 `yes` |
 | `ssh_password_auth` | `no` | `no` 或 `yes`. 选 `no` 时脚本会校验 `allow_users` 都有 `authorized_keys`, 否则拒绝执行（避免锁死） |
 | `ssh_rollback_after_minutes` | `5` | deadman 自动回滚窗口 |
+
+---
+
+## 开场对话协议（强制, 不允许静默跳过可选 phase）
+
+**触发条件**：用户在调用 SKILL 时**只给了必填参数**（git_user_name / git_user_email）, 或者下面任一可选参数**没显式提到**：
+- `hostname` / `timezone`（→ phase 02a）
+- `install_zsh`（→ phase 02b）
+- `project_repo_url`（→ phase 06）
+- `install_plugins_skills`（→ phase 07）
+- `harden_ssh`（→ phase 08）
+
+→ Agent **必须**在跑任何 phase 之前, 一次性把下面 5 块内容发给用户让其挑选, 不允许"先跑完必跑 phase 再说"。
+
+**对话模板**（原样发, 把 `<name>` `<email>` 替换成用户传的值）：
+
+```
+收到。git 身份会配成 <name> <email>, 开始执行前先确认 5 个可选 phase。
+不需要的回 "跳过", 需要的把参数一起说, 也可以一句 "全用默认" 让我只跑必跑项。
+
+【02a】设主机名 + 时区
+  默认：跳过 (维持当前 hostname / 时区)
+  要做：给 hostname (如 web-01) 和 / 或 timezone (如 Asia/Shanghai, UTC)
+
+【02b】装 zsh + oh-my-zsh + agnoster 主题
+  默认：跳过 (继续用 bash)
+  要做：回 "装 zsh", 默认主题 agnoster (Powerline 字体需另装), 想换主题直接说
+
+【06】克隆项目仓库 + 装语言依赖
+  默认：跳过
+  要做：给 git URL, 可选 project_dir 和需要的 .env key 列表 (如 TUSHARE_TOKEN,OPENAI_API_KEY)
+
+【07】装 Claude Code plugins / skills (superpowers / claude-mem / skill-creator 等)
+  默认：跳过
+  要做：回 "装 plugins", 我会读出 templates/*.yaml 里的清单, 你挑哪几项
+
+【08】SSH 加固 (改端口 / 禁密码 / 禁 root, 带 deadman 自动回滚)
+  ⚠️ 高风险, 错配会锁死。默认：跳过
+  要做：给 ssh_port (不能是 22)、ssh_allow_users (逗号分隔)、是否禁密码登录
+        进入后还会按"Phase 08 强制对话流程"再走一遍逐项确认
+```
+
+**处理规则**：
+
+| 用户回答 | 处理 |
+|---|---|
+| 对每个可选 phase 都明确表态 (要 / 跳过) | 把答案补进对应参数, 进入"## 执行流程" |
+| 一句 "全跳过" 或 "全用默认" | 只跑必跑 phase (01/02/03/04/05/verify), 不再问 |
+| 只回答了一部分, 其他没提 | 把没提的当 "跳过", 但**执行前**再发一次"我准备跳过的 phase 是 X / Y / Z, 确认?", 用户确认才开跑 |
+| 用户说 "你看着办" / 不明确 | 默认全跳过, 但仍按上一行规则做最终确认 |
+
+**反面教材**（不要这样做）：
+- ❌ 直接按默认全跳过, 跑完才在 verify 输出里告诉用户"已跳过 02a / 02b / 06 / 07 / 08"
+- ❌ 把 5 个 phase 拆成 5 轮对话挨个问 (用户提过"不要中途反复打断")
+- ❌ 自作主张帮用户决定 install_zsh=true 之类的 (任何可选 phase 默认值就是 false / 跳过)
 
 ---
 

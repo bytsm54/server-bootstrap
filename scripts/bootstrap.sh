@@ -45,6 +45,23 @@ fi
 cd "$REPO_DIR"
 chmod +x scripts/*.sh scripts/lib/*.sh 2>/dev/null || true
 
+# --- 2.5. 注册到 Claude 技能目录, 否则 claude 启动后发现不到 server-bootstrap 这个 SKILL
+SKILLS_DIR="$HOME/.claude/skills"
+SKILL_LINK="$SKILLS_DIR/server-bootstrap"
+mkdir -p "$SKILLS_DIR"
+if [ -L "$SKILL_LINK" ]; then
+  if [ "$(readlink -f "$SKILL_LINK" 2>/dev/null || readlink "$SKILL_LINK")" != "$REPO_DIR" ]; then
+    log "修正软链 $SKILL_LINK → $REPO_DIR"
+    rm -f "$SKILL_LINK"
+    ln -s "$REPO_DIR" "$SKILL_LINK"
+  fi
+elif [ -e "$SKILL_LINK" ]; then
+  warn "$SKILL_LINK 已存在且不是软链, 跳过注册 (claude 会使用那份目录里的 SKILL.md)"
+else
+  log "注册 SKILL：$SKILL_LINK → $REPO_DIR"
+  ln -s "$REPO_DIR" "$SKILL_LINK"
+fi
+
 # --- 3. 三个核心 phase
 log "Phase 02 — apt 基础依赖"
 bash "$REPO_DIR/scripts/02-base-deps.sh"
@@ -73,6 +90,7 @@ cat <<EOF
   - 系统依赖 (apt + at)
   - Node:        $NODE_VER
   - Claude Code: $CLAUDE_VER ($HOME/.local/bin/claude)
+  - SKILL 注册:  $SKILL_LINK → $REPO_DIR (claude 启动后可识别 server-bootstrap)
 
 EOF
 

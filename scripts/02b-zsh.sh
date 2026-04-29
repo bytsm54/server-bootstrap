@@ -107,6 +107,45 @@ fi
 
 # --- 3. 启用插件（编辑 ~/.zshrc 的 plugins=(...) 行）
 ZSHRC="$USER_HOME/.zshrc"
+TEMPLATE="$USER_HOME/.oh-my-zsh/templates/zshrc.zsh-template"
+
+# 健康检查 + 自愈: .zshrc 必须含 omz 入口 (`export ZSH=` 和 `source $ZSH/oh-my-zsh.sh`)
+#
+# 失败场景: omz installer 用了 KEEP_ZSHRC=yes (避免覆盖用户自定义 .zshrc)。
+# 如果 .zshrc 在 install 前就存在 — 云镜像 / cloud-init / 之前失败的尝试都可能
+# 留下一个空的或部分的 .zshrc — installer 走 keep 分支, 不复制模板, .zshrc
+# 缺 omz 入口, 后续 zsh 启动看似 "在 zsh 里" 但根本没加载 omz (没主题、没插件、
+# 没 ll alias)。这里强制校验, 缺了就以 omz 模板为底重置。
+NEEDS_RESET=0
+if [ ! -f "$ZSHRC" ]; then
+  log ".zshrc 不存在 (omz installer 异常?), 用 omz 模板创建"
+  NEEDS_RESET=1
+elif ! grep -qE '^[[:space:]]*export[[:space:]]+ZSH=' "$ZSHRC" 2>/dev/null \
+   || ! grep -qE 'source[[:space:]]+\$ZSH/oh-my-zsh\.sh' "$ZSHRC" 2>/dev/null; then
+  warn ".zshrc 缺 omz 入口 (export ZSH= 或 source \$ZSH/oh-my-zsh.sh)"
+  warn "典型成因: omz installer KEEP_ZSHRC=yes 遇到了已存在的部分 .zshrc"
+  NEEDS_RESET=1
+fi
+
+if [ "$NEEDS_RESET" -eq 1 ]; then
+  if [ ! -f "$TEMPLATE" ]; then
+    err "omz 模板 $TEMPLATE 不存在 — omz 安装可能失败, 排查后重跑"
+    exit 1
+  fi
+  AS_USER=()
+  [ "$(id -un)" != "$USER_NAME" ] && AS_USER=(sudo -u "$USER_NAME")
+  if [ -f "$ZSHRC" ]; then
+    BACKUP="$ZSHRC.broken-$(date +%Y%m%d-%H%M%S)"
+    "${AS_USER[@]}" cp "$ZSHRC" "$BACKUP"
+    log "现状备份 → $BACKUP"
+  fi
+  "${AS_USER[@]}" cp "$TEMPLATE" "$ZSHRC"
+  # 模板里 ZSH=$HOME/... 是 shell 变量风格, 跟 omz installer 行为对齐, 写绝对路径
+  "${AS_USER[@]}" sed -i.tmp -E "s|^export ZSH=.*$|export ZSH=\"$USER_HOME/.oh-my-zsh\"|" "$ZSHRC"
+  "${AS_USER[@]}" rm -f "$ZSHRC.tmp"
+  ok ".zshrc 已重置为 omz 模板"
+fi
+
 if [ -f "$ZSHRC" ]; then
   # 只把"真 omz plugin"放进 plugins=()
   WANT_PLUGINS=(git sudo)

@@ -11,17 +11,21 @@
 #      apt 装的 zsh-syntax-highlighting / zsh-autosuggestions 落在 /usr/share/, 不是
 #      omz plugin 结构, 写进 plugins=() 会触发 "plugin not found" 告警, 因此通过
 #      .zshrc 末尾的 source 行加载（见步骤末尾, 这才是真正让功能工作的地方）。
-#   4. 设 ZSH_THEME=<theme>（默认 agnoster, 任何 oh-my-zsh 内置主题名都行）
+#   4. 设 ZSH_THEME=<theme>（默认 powerlevel10k/powerlevel10k）
+#      - 内置主题（agnoster / robbyrussell 等）直接 set
+#      - 含 "/" 的自定义主题（如 powerlevel10k/powerlevel10k）会自动 git clone 到
+#        ~/.oh-my-zsh/custom/themes/<repo>/, 然后 set 主题路径
 #   5. 默认 shell 改为 zsh（仅当 --default-shell yes, 默认 yes, 需要 sudo 走 chsh）
 #
 # 顺序提醒：
 #   本 phase 应该在 03-node.sh 之前跑, 这样 nvm 的 ~/.zshrc 注入位于
 #   oh-my-zsh 模板之后, 不会被覆盖。
 #
-# agnoster 字体提示：
-#   agnoster 主题用 Powerline 字符, 需要你 *本地终端* 装一个 Powerline 兼容字体
-#   (推荐 MesloLGS NF / Hack Nerd Font / Source Code Pro for Powerline) 并在终端
-#   里选用, 否则箭头形状会变成乱码方块。服务器端无需配置。
+# powerlevel10k 字体提示：
+#   p10k 推荐你 *本地终端* 装 MesloLGS NF (Nerd Font), 才能完整显示 icon。
+#   下载: https://github.com/romkatv/powerlevel10k/blob/master/font.md
+#   首次进交互 zsh 时会跳出 "p10k configure" 向导, 没装 Nerd Font 也能在向导里
+#   选 "ASCII only" 风格, 不影响功能。服务器端无需配置, 这是终端字体设置。
 
 set -euo pipefail
 
@@ -32,7 +36,7 @@ err()  { printf '\033[1;31m  ❌\033[0m %s\n' "$*" >&2; }
 
 USER_NAME="$(id -un)"
 DEFAULT_SHELL="yes"
-ZSH_THEME_NAME="agnoster"
+ZSH_THEME_NAME="powerlevel10k/powerlevel10k"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -149,10 +153,32 @@ if [ -f "$ZSHRC" ]; then
     fi
   done
 
+  # 含 "/" 的是自定义主题 (如 powerlevel10k/powerlevel10k), 需要先 clone 到
+  # ~/.oh-my-zsh/custom/themes/<repo>/。已知 mapping: powerlevel10k → romkatv/powerlevel10k
+  case "$ZSH_THEME_NAME" in
+    powerlevel10k/*)
+      P10K_DIR="$USER_HOME/.oh-my-zsh/custom/themes/powerlevel10k"
+      if [ -d "$P10K_DIR/.git" ]; then
+        ok "powerlevel10k 已存在 ($P10K_DIR)"
+      else
+        log "克隆 powerlevel10k → $P10K_DIR"
+        if [ "$(id -un)" = "$USER_NAME" ]; then
+          git clone --depth=1 https://github.com/romkatv/powerlevel10k.git "$P10K_DIR"
+        else
+          sudo -u "$USER_NAME" git clone --depth=1 https://github.com/romkatv/powerlevel10k.git "$P10K_DIR"
+        fi
+        ok "powerlevel10k 克隆完成"
+      fi
+      ;;
+  esac
+
   # 设 ZSH_THEME
-  THEME_FILE="$USER_HOME/.oh-my-zsh/themes/${ZSH_THEME_NAME}.zsh-theme"
-  if [ -d "$USER_HOME/.oh-my-zsh/themes" ] && [ ! -f "$THEME_FILE" ]; then
-    warn "主题 '$ZSH_THEME_NAME' 在 $USER_HOME/.oh-my-zsh/themes/ 找不到"
+  case "$ZSH_THEME_NAME" in
+    */*) THEME_FILE="$USER_HOME/.oh-my-zsh/custom/themes/${ZSH_THEME_NAME}.zsh-theme" ;;
+    *)   THEME_FILE="$USER_HOME/.oh-my-zsh/themes/${ZSH_THEME_NAME}.zsh-theme" ;;
+  esac
+  if [ ! -f "$THEME_FILE" ]; then
+    warn "主题 '$ZSH_THEME_NAME' 在 $THEME_FILE 找不到"
     warn "继续设置, 但 zsh 启动时可能报错。检查拼写或自行下载主题文件。"
   fi
 
@@ -173,11 +199,17 @@ if [ -f "$ZSHRC" ]; then
     ok "ZSH_THEME 已追加 = $ZSH_THEME_NAME"
   fi
 
-  if [ "$ZSH_THEME_NAME" = "agnoster" ]; then
-    log "提示: agnoster 主题使用 Powerline 字符, 你的*本地终端*需要装一个"
-    log "      Powerline 兼容字体（推荐 MesloLGS NF / Hack Nerd Font）才能正常显示。"
-    log "      服务器端无需配置, 这是终端字体设置。"
-  fi
+  case "$ZSH_THEME_NAME" in
+    powerlevel10k/*)
+      log "提示: powerlevel10k 推荐你*本地终端*装 MesloLGS NF (Nerd Font) 才能完整显示 icon"
+      log "      下载: https://github.com/romkatv/powerlevel10k/blob/master/font.md"
+      log "      首次进交互 zsh 会跳出 'p10k configure' 向导, 选风格即可"
+      ;;
+    agnoster)
+      log "提示: agnoster 主题用 Powerline 字符, 本地终端需装 Powerline 兼容字体"
+      log "      (MesloLGS NF / Hack Nerd Font 都行)"
+      ;;
+  esac
 else
   warn "~/.zshrc 不存在（oh-my-zsh 安装异常？）"
 fi

@@ -55,8 +55,8 @@ claude   # 登录
 | `npm_registry` | `official` | `china` (npmmirror.com) 或 `official` (npmjs.org)。**中国大陆用户强烈建议设 `china`** |
 | `claude_install_method` | `auto` | `auto`（github 失败回落 curl）/ `github`（GitHub releases 直下二进制, **国内推荐**, 走 github.com 不经 Cloudflare）/ `curl`（claude.ai/install.sh, 国内常 403）。**npm 方式已被 Anthropic 弃用, 本 skill 不再提供** |
 | `claude_version` | （空）= latest | 显式钉版本如 `v2.1.119`, 跳过 GitHub API 查询（API 60 次/小时限流时有用） |
-| `install_zsh` | `true` | 进入 phase 02b：装 zsh + oh-my-zsh + agnoster 主题 + 设默认 shell。`false` 跳过 |
-| `zsh_theme` | `agnoster` | 仅 `install_zsh=true` 时生效, 任何 oh-my-zsh 内置主题名都行 |
+| `install_zsh` | `true` | 进入 phase 02b：装 zsh + oh-my-zsh + powerlevel10k 主题 + 设默认 shell。`false` 跳过 |
+| `zsh_theme` | `powerlevel10k/powerlevel10k` | 仅 `install_zsh=true` 时生效。内置主题（agnoster/robbyrussell 等）直接生效；含 `/` 的自定义主题（如 p10k）会自动 git clone 到 `~/.oh-my-zsh/custom/themes/` |
 | `project_repo_url` | （空, 跳过 phase 06） | 要克隆的项目 git URL |
 | `project_dir` | `~/<repo basename>` | 克隆目标路径 |
 | `project_env_keys` | （空） | 项目需要的环境变量 key 列表（如 `TUSHARE_TOKEN,OPENAI_API_KEY`）, phase 06 会**引导用户填到 `.env`**, 不写 `~/.zshrc` |
@@ -100,9 +100,9 @@ claude   # 登录
   可选: hostname (默认不动)
   关掉: 回 "跳过 02a"
 
-【02b】装 zsh + oh-my-zsh + agnoster 主题
-  ✅ 默认: 装 (fonts-powerline 已由 phase 02 装好)
-  可改: zsh_theme=<其他 omz 内置主题>
+【02b】装 zsh + oh-my-zsh + powerlevel10k 主题
+  ✅ 默认: 装 (p10k 自动 clone, 首次进交互 zsh 会跳 p10k configure 向导)
+  可改: zsh_theme=<其他主题, 如 agnoster / robbyrussell>
   关掉: 回 "跳过 02b"
 
 【06】克隆项目仓库 + 装语言依赖
@@ -215,7 +215,7 @@ fi
 
 # 可选 phase 02b（必须在 03-node 之前跑, 让 .zshrc 创建顺序对）
 if [ "${install_zsh:-false}" = "true" ]; then
-  bash "$REPO_DIR/scripts/02b-zsh.sh" --theme "${zsh_theme:-agnoster}"
+  bash "$REPO_DIR/scripts/02b-zsh.sh" --theme "${zsh_theme:-powerlevel10k/powerlevel10k}"
 fi
 
 bash "$REPO_DIR/scripts/03-node.sh"        --node-version "${node_version:-lts}" --npm-registry "${npm_registry:-official}"

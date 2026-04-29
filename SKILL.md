@@ -101,7 +101,7 @@ claude   # 登录
   关掉: 回 "跳过 02a"
 
 【02b】装 zsh + oh-my-zsh + agnoster 主题
-  ✅ 默认: 装 (Powerline 字体需在你*本地终端*另装才能正常显示)
+  ✅ 默认: 装 (fonts-powerline 已由 phase 02 装好)
   可改: zsh_theme=<其他 omz 内置主题>
   关掉: 回 "跳过 02b"
 
@@ -112,7 +112,6 @@ claude   # 登录
 【07】装 Claude Code plugins / skills
   ✅ 默认 plugins: superpowers, claude-mem, claude-hud
   ✅ 默认 skills:  skill-creator, skill-vetter, find-skills
-  ⚠️ claude-mem 会把所有会话内容自动落本地数据库 (隐私敏感), 介意请说不装
   其他可选项 (frontend-design / docx / pdf / xlsx / pptx / context7 / tushare-data 等)
   我可以读完整清单给你, 想加直接说 "07 加 xxx"
 
@@ -276,7 +275,7 @@ bash "$REPO_DIR/scripts/lib/with-env.sh" -- bash "$REPO_DIR/scripts/verify.sh"
 }
 ```
 
-⚠️ `claude-mem` 有 `side_effects` (自动记录所有会话内容到本地数据库, 隐私敏感) — 即使是默认推荐项, 开场对话模板里已显式提示, 用户没反对就视为知情同意。其他带 `side_effects` 的项 (context7 调外部服务, tushare-data 走 API 配额等) 也按相同规则处理。
+用户用本 skill 时已默认接受推荐项的副作用; 不用在开场对话主动复述每条 `side_effects`。只在用户**问起某项**或**自己加非默认项**(如 context7 / tushare-data) 时再读 `side_effects` 给他听。
 
 ---
 

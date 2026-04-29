@@ -109,14 +109,17 @@ claude   # 登录
   默认: 跳过 (没默认仓库)
   要做: 给 git URL, 可选 project_dir 和 .env keys (如 TUSHARE_TOKEN,OPENAI_API_KEY)
 
-【07】装 Claude Code plugins / skills (装完自动软链给 codex 共享)
+【07】装 Claude Code plugins / skills
   ✅ 默认 plugins: superpowers, claude-mem, claude-hud
   ✅ 默认 skills:  skill-creator, skill-vetter, find-skills
   其他可选 plugins (web-access / pua)
   其他可选 skills (frontend-design / docx / pdf / xlsx / pptx / context7 / tushare-data 等)
   我可以读完整清单给你, 想加直接说 "07 加 xxx"
-  ↳ skill 装完后会逐项软链 ~/.agents/skills/* → ~/.codex/skills/*,
-    codex (phase 04a 装的) 共享同一份 skill, 不重复装。
+
+【07a】codex skill 共享 (自动, 无需选择)
+  ✅ 紧接 07 之后跑 (无 user 决策点): 把 ~/.agents/skills/* 逐项软链到
+     ~/.codex/skills/*, 让 phase 04a 装的 codex 复用同一份 skill, 不重复装。
+  关掉条件: codex 没装时自动 no-op; 跳过了 07 时, 软链一份空目录, 不报错。
 
 【08】SSH 加固
   ✅ 默认: port=22022, allow_users=<allow-user>, 禁密码, 禁 root, deadman=5min
@@ -160,7 +163,8 @@ claude   # 登录
 | 04a | Codex CLI | `scripts/04a-codex.sh` | ❌ 用户态 | 必跑（`npm install -g @openai/codex`, 由 `bootstrap.sh` 调用） |
 | 05 | git 身份 | `scripts/05-git-identity.sh` | ❌ | 必跑 |
 | 06 | 项目克隆 + 依赖 | `scripts/06-project.sh` | ❌ | `project_repo_url` 提供时才跑 |
-| 07 | plugins / skills | `scripts/07-plugins-skills.sh` | ❌ | `install_plugins_skills` 默认 true; 装完 skill 后逐项软链到 `~/.codex/skills/` 让 codex 共享 |
+| 07 | plugins / skills (Claude) | `scripts/07-plugins-skills.sh` | ❌ | `install_plugins_skills` 默认 true |
+| 07a | codex skill 软链 | `scripts/07a-codex-skills.sh` | ❌ | 自动跑（codex 已装才生效）; 把 `~/.agents/skills/*` 软链到 `~/.codex/skills/*` 让 codex 共享 Claude 装好的 skill |
 | 08 | **SSH 加固** | `scripts/08-ssh-harden.sh` | ✅ | `harden_ssh` 默认 true, **必须按下方对话流程**执行 |
 | 09 | fail2ban (sshd jail) | `scripts/09-fail2ban.sh` | ✅ | `enable_fail2ban` 默认 true; 装在 08 之后, 监听 ssh_port |
 | -- | 总检查 | `scripts/verify.sh` | ❌ | 必跑 |
@@ -242,6 +246,11 @@ if [ "${install_plugins_skills:-false}" = "true" ]; then
     --skills-yaml  "$REPO_DIR/templates/skills.yaml" \
     --selection "$selection_json"  # 见下
 fi
+
+# Phase 07a: codex skill 共享 (自动跑, 无 user 决策点)
+# - codex 没装就 no-op
+# - 把 ~/.agents/skills/* 软链到 ~/.codex/skills/*
+bash "$REPO_DIR/scripts/lib/with-env.sh" -- bash "$REPO_DIR/scripts/07a-codex-skills.sh"
 
 # 可选 phase 08：高风险, 必须按下方「Phase 08 强制对话流程」执行, 不要"一气呵成"
 if [ "${harden_ssh:-true}" = "true" ]; then

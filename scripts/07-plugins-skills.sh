@@ -181,51 +181,5 @@ for c in "${COMMANDS[@]}"; do
   fi
 done
 
-# --- codex skill 软链
-# 让 codex 复用 Claude 刚装好的 skills, 不重复装一遍。
-# `npx skills add -g` 默认装到 ~/.agents/skills/ (兼容 Claude 老版的 ~/.claude/skills/),
-# codex 读 ~/.codex/skills/, 我们逐项做 symlink (per-skill, 不动 codex 自有 skill)。
-if command -v codex >/dev/null 2>&1; then
-  SRC_DIR=""
-  for cand in "$HOME/.agents/skills" "$HOME/.claude/skills"; do
-    if [ -d "$cand" ] && [ -n "$(ls -A "$cand" 2>/dev/null)" ]; then
-      SRC_DIR="$cand"
-      break
-    fi
-  done
-  if [ -n "$SRC_DIR" ]; then
-    DST_DIR="$HOME/.codex/skills"
-    mkdir -p "$DST_DIR"
-    log "软链 $SRC_DIR/* → $DST_DIR/  (codex 共享 Claude skill)"
-    LINKED=0
-    SKIPPED=0
-    for skill_path in "$SRC_DIR"/*; do
-      [ -e "$skill_path" ] || continue
-      name="$(basename "$skill_path")"
-      target="$DST_DIR/$name"
-      if [ -L "$target" ]; then
-        cur="$(readlink -f "$target" 2>/dev/null || true)"
-        new="$(readlink -f "$skill_path" 2>/dev/null || true)"
-        if [ "$cur" = "$new" ] && [ -n "$cur" ]; then
-          continue
-        fi
-        rm -f "$target"
-        ln -s "$skill_path" "$target"
-        LINKED=$((LINKED + 1))
-      elif [ -e "$target" ]; then
-        warn "跳过 $name (已存在且不是软链, 不动)"
-        SKIPPED=$((SKIPPED + 1))
-      else
-        ln -s "$skill_path" "$target"
-        LINKED=$((LINKED + 1))
-      fi
-    done
-    ok "codex skill 软链完成: $LINKED 已链, $SKIPPED 跳过 ($DST_DIR)"
-  else
-    log "找不到 Claude skill 目录 (~/.agents/skills 和 ~/.claude/skills 都为空), 跳过 codex 软链"
-  fi
-else
-  log "codex 未装, 跳过 codex skill 软链"
-fi
-
 log "完成。可用 verify.sh 检查最终安装数量。"
+log "提醒: codex 共享 Claude skill 的软链由独立 phase 07a (07a-codex-skills.sh) 处理。"

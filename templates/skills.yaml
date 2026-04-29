@@ -1,19 +1,25 @@
-# server-bootstrap — skills 推荐清单（仅作示例, 默认不会自动安装任何一项）
+# server-bootstrap — skills 推荐清单
 #
 # 同 plugins.yaml：phase 07 会把这份清单展示给用户, 由用户选择。
 #
 # install 字段直接拼接到 `npx skills add <install> -g -y`, 所以可以是：
 #   - "<owner>/<repo>"                 仓库根 SKILL.md
 #   - "<owner>/<repo>@<skill>"         仓库 skills/<skill>/SKILL.md
+#
+# recommended（可选, 默认 false）：SKILL 开场对话默认勾选项
+#   - true: agent 把这项标 ✅ 推荐, 用户回 "全用默认" 时会装
+#   - 未写 / false: agent 仍展示, 但默认不勾选
 
 skills:
   - id: skill-creator
     install: anthropics/skills@skill-creator
+    recommended: true
     description: Anthropic 官方, 用于创建 / 改进 / 评测 skill
     side_effects: 无
 
   - id: skill-vetter
     install: useai-pro/openclaw-skills-security@skill-vetter
+    recommended: true
     description: 安装第三方 skill 前的安全审查（推荐配合 claude-mem 用）
     side_effects: 无（只读分析）
 
@@ -49,6 +55,7 @@ skills:
 
   - id: find-skills
     install: vercel-labs/skills@find-skills
+    recommended: true
     description: 在大量已装 skill 中按描述搜索
     side_effects: 无
 

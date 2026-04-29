@@ -112,6 +112,20 @@ if [ -f /var/run/sshd-bootstrap-deadman.atjob ] || sudo test -f /var/run/sshd-bo
   warn "SSH:        发现挂起的 deadman 任务 — 你应该跑 phase 08 confirm 或 rollback"
 fi
 
+# fail2ban（仅当装了才报）
+if command -v fail2ban-client >/dev/null 2>&1; then
+  if sudo systemctl is-active --quiet fail2ban 2>/dev/null; then
+    F2B_PORT="$(sudo awk -F= '/^[[:space:]]*port[[:space:]]*=/{gsub(/ /,"",$2); print $2; exit}' /etc/fail2ban/jail.d/sshd.local 2>/dev/null || true)"
+    if [ -n "$F2B_PORT" ]; then
+      ok "fail2ban:   active, sshd jail 监听端口 $F2B_PORT"
+    else
+      ok "fail2ban:   active"
+    fi
+  else
+    warn "fail2ban:   已装但未运行（sudo systemctl start fail2ban）"
+  fi
+fi
+
 echo "=========================="
 echo " done"
 echo "=========================="

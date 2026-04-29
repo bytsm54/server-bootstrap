@@ -11,6 +11,9 @@
 #                  - 如果省略, 假定 marketplace 已是 Claude Code 内置（如 claude-plugins-official）
 #                    或用户已手动 add 过, 否则 install 会报 "marketplace not found"
 #                  - phase 07 会在 install 前自动跑 `marketplace add <marketplace>`（幂等, 已有则 no-op）
+#   recommended  （可选, 默认 false）SKILL 开场对话中是否默认勾选这一项
+#                  - true: agent 在"plugins/skills 选择"对话里把这项标 ✅ 推荐, 用户回 "全用默认" 时会装
+#                  - 未写 / false: agent 仍展示, 但默认不勾选
 #   description  一句话功能描述
 #   side_effects 副作用 / 隐私 / 性能注意。"无" 表示无副作用
 #
@@ -23,12 +26,14 @@ plugins:
   - id: superpowers
     install: superpowers@claude-plugins-official
     # claude-plugins-official 是 Claude Code 内置 marketplace, 无需 add
+    recommended: true
     description: 通用工作流增强（brainstorming / TDD / debugging / 计划与执行 等系列 skills）
     side_effects: 无（仅增加可用 skill）
 
   - id: claude-mem
     install: claude-mem@thedotmack
     marketplace: thedotmack/claude-mem
+    recommended: true
     description: 跨会话持久化记忆 + 搜索
     side_effects: ⚠️ 会自动记录所有会话内容到本地数据库, 并在每次会话启动时把摘要塞进上下文。
                  隐私敏感, 慎选。
@@ -36,6 +41,7 @@ plugins:
   - id: claude-hud
     install: claude-hud@claude-hud
     marketplace: jarrodwatts/claude-hud
+    recommended: true
     description: 终端状态栏 HUD（显示 token 用量等）
     side_effects: 修改 ~/.claude/settings.json 的 statusLine 配置。
 

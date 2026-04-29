@@ -109,12 +109,9 @@ cat <<EOF
   Claude Code: $CLAUDE_VER
   SKILL:       $SKILL_LINK
 
-加载 PATH (任选一种):
-  ① exit && 重新 ssh
-  ② exec bash -l
-  ③ source ~/.nvm/nvm.sh && export PATH="\$HOME/.local/bin:\$PATH"
+下一步 — 在当前 shell 执行下面这一行加载 PATH, 再起 claude:
 
-然后:
-  claude
-  # 在 claude 会话里说: "执行 server-bootstrap, git_user_name=..., git_user_email=..."
+  source ~/.nvm/nvm.sh && export PATH="\$HOME/.local/bin:\$PATH" && claude
+
+进 claude 会话后说: "执行 server-bootstrap, git_user_name=..., git_user_email=..."
 EOF

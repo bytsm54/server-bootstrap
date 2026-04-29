@@ -42,83 +42,106 @@ claude   # 登录
 | `git_user_name` | git 全局 `user.name`, 用于 commit 署名 |
 | `git_user_email` | git 全局 `user.email` |
 
-### 可选（不填则该 phase 跳过 / 走默认）
+### 可选（默认值见下表, 用户可在开场对话里覆盖）
+
+> **本 skill 的默认配置是"推荐"路径** — 即开场对话里所有可选 phase 都默认 ON, 用户只需要明确说"跳过 X"才会跳过。
+> 想关闭推荐默认, 在调用 SKILL 时显式传 `install_zsh=false` / `harden_ssh=false` 之类即可。
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
 | `hostname` | （空, 跳过） | 设系统 hostname, 同步 /etc/hosts 127.0.1.1 行 |
-| `timezone` | （空, 跳过） | 设时区, 如 `Asia/Shanghai`、`UTC`、`America/New_York` |
+| `timezone` | `Asia/Shanghai` | 设时区, 如 `Asia/Shanghai`、`UTC`、`America/New_York`。空字符串才跳过 |
 | `node_version` | `lts` | nvm install 的 Node 版本, 如 `lts`、`20`、`22.5.0` |
 | `npm_registry` | `official` | `china` (npmmirror.com) 或 `official` (npmjs.org)。**中国大陆用户强烈建议设 `china`** |
 | `claude_install_method` | `auto` | `auto`（github 失败回落 curl）/ `github`（GitHub releases 直下二进制, **国内推荐**, 走 github.com 不经 Cloudflare）/ `curl`（claude.ai/install.sh, 国内常 403）。**npm 方式已被 Anthropic 弃用, 本 skill 不再提供** |
 | `claude_version` | （空）= latest | 显式钉版本如 `v2.1.119`, 跳过 GitHub API 查询（API 60 次/小时限流时有用） |
-| `install_zsh` | `false` | true 时进入 phase 02b：装 zsh + oh-my-zsh + 设默认 shell |
+| `install_zsh` | `true` | 进入 phase 02b：装 zsh + oh-my-zsh + agnoster 主题 + 设默认 shell。`false` 跳过 |
 | `zsh_theme` | `agnoster` | 仅 `install_zsh=true` 时生效, 任何 oh-my-zsh 内置主题名都行 |
 | `project_repo_url` | （空, 跳过 phase 06） | 要克隆的项目 git URL |
 | `project_dir` | `~/<repo basename>` | 克隆目标路径 |
 | `project_env_keys` | （空） | 项目需要的环境变量 key 列表（如 `TUSHARE_TOKEN,OPENAI_API_KEY`）, phase 06 会**引导用户填到 `.env`**, 不写 `~/.zshrc` |
-| `install_plugins_skills` | `false` | 是否进入 phase 07; true 时 agent 会展示 `templates/*.yaml` 让用户挑选 |
-| `harden_ssh` | `false` | **高风险**, 是否进入 phase 08。下面参数仅 `harden_ssh=true` 时需要 |
-| `ssh_port` | （必填若 harden_ssh） | 1024-65535, 不能是 22 |
-| `ssh_allow_users` | （必填若 harden_ssh） | 逗号分隔, 如 `ubuntu,bytsm54` |
+| `install_plugins_skills` | `true` | 进入 phase 07; agent 会展示 `templates/*.yaml`, 默认勾选 `recommended: true` 项 |
+| `harden_ssh` | `true` | **高风险**, 进入 phase 08。**注意**: 即使默认 true, 也必须按"Phase 08 强制对话流程"逐项确认 |
+| `ssh_port` | `22022` | 1024-65535, 不能是 22 |
+| `ssh_allow_users` | `ubuntu` | 逗号分隔, 如 `ubuntu,bytsm54`。**agent 必须先 `whoami` 校对**: 若当前用户不在列表里且 `ssh_password_auth=no`, 会被锁死 |
 | `ssh_permit_root` | `no` | `no` 或 `yes` |
 | `ssh_password_auth` | `no` | `no` 或 `yes`. 选 `no` 时脚本会校验 `allow_users` 都有 `authorized_keys`, 否则拒绝执行（避免锁死） |
 | `ssh_rollback_after_minutes` | `5` | deadman 自动回滚窗口 |
+| `enable_fail2ban` | `true` | 进入 phase 09: 装 fail2ban + 配 sshd jail 防暴力破解。即使 `harden_ssh=false` 也可独立开 (jail 监听 22) |
 
 ---
 
-## 开场对话协议（强制, 不允许静默跳过可选 phase）
+## 开场对话协议（强制, 必须把推荐默认值摆给用户确认）
 
 **触发条件**：用户在调用 SKILL 时**只给了必填参数**（git_user_name / git_user_email）, 或者下面任一可选参数**没显式提到**：
 - `hostname` / `timezone`（→ phase 02a）
 - `install_zsh`（→ phase 02b）
 - `project_repo_url`（→ phase 06）
 - `install_plugins_skills`（→ phase 07）
-- `harden_ssh`（→ phase 08）
+- `harden_ssh` / `enable_fail2ban`（→ phase 08 / 09）
 
-→ Agent **必须**在跑任何 phase 之前, 一次性把下面 5 块内容发给用户让其挑选, 不允许"先跑完必跑 phase 再说"。
+→ Agent **必须**在跑任何 phase 之前, 一次性把下面 6 块内容发给用户让其确认, 不允许"先跑完必跑 phase 再说"。
 
-**对话模板**（原样发, 把 `<name>` `<email>` 替换成用户传的值）：
+**预备动作**（发对话前 agent 先做）：
+- `whoami` 拿到当前用户名, 如果不是 `ubuntu`, 在 phase 08 那块把 `ssh_allow_users` 默认值改成实际用户名（避免锁死）
+- 默认 plugins/skills 选择 = `templates/plugins.yaml` 和 `skills.yaml` 里所有 `recommended: true` 的项
+
+**对话模板**（原样发, 把 `<name>` `<email>` 替换成用户传的值, `<allow-user>` 替换成 `whoami` 结果）：
 
 ```
-收到。git 身份会配成 <name> <email>, 开始执行前先确认 5 个可选 phase。
-不需要的回 "跳过", 需要的把参数一起说, 也可以一句 "全用默认" 让我只跑必跑项。
+收到。git 身份会配成 <name> <email>。
 
-【02a】设主机名 + 时区
-  默认：跳过 (维持当前 hostname / 时区)
-  要做：给 hostname (如 web-01) 和 / 或 timezone (如 Asia/Shanghai, UTC)
+我已按推荐默认勾好 5 个可选 phase, 不需要的回 "跳过 X" (例: "跳过 02a"),
+想改参数直接说 (例: "ssh 端口改 33333", "不要 claude-mem")。
+一句 "全用默认" 我就按下面跑 (phase 08 仍会逐项确认)。
+
+【02a】系统配置 — 时区
+  ✅ 默认: timezone=Asia/Shanghai
+  可选: hostname (默认不动)
+  关掉: 回 "跳过 02a"
 
 【02b】装 zsh + oh-my-zsh + agnoster 主题
-  默认：跳过 (继续用 bash)
-  要做：回 "装 zsh", 默认主题 agnoster (Powerline 字体需另装), 想换主题直接说
+  ✅ 默认: 装 (Powerline 字体需在你*本地终端*另装才能正常显示)
+  可改: zsh_theme=<其他 omz 内置主题>
+  关掉: 回 "跳过 02b"
 
 【06】克隆项目仓库 + 装语言依赖
-  默认：跳过
-  要做：给 git URL, 可选 project_dir 和需要的 .env key 列表 (如 TUSHARE_TOKEN,OPENAI_API_KEY)
+  默认: 跳过 (没默认仓库)
+  要做: 给 git URL, 可选 project_dir 和 .env keys (如 TUSHARE_TOKEN,OPENAI_API_KEY)
 
-【07】装 Claude Code plugins / skills (superpowers / claude-mem / skill-creator 等)
-  默认：跳过
-  要做：回 "装 plugins", 我会读出 templates/*.yaml 里的清单, 你挑哪几项
+【07】装 Claude Code plugins / skills
+  ✅ 默认 plugins: superpowers, claude-mem, claude-hud
+  ✅ 默认 skills:  skill-creator, skill-vetter, find-skills
+  ⚠️ claude-mem 会把所有会话内容自动落本地数据库 (隐私敏感), 介意请说不装
+  其他可选项 (frontend-design / docx / pdf / xlsx / pptx / context7 / tushare-data 等)
+  我可以读完整清单给你, 想加直接说 "07 加 xxx"
 
-【08】SSH 加固 (改端口 / 禁密码 / 禁 root, 带 deadman 自动回滚)
-  ⚠️ 高风险, 错配会锁死。默认：跳过
-  要做：给 ssh_port (不能是 22)、ssh_allow_users (逗号分隔)、是否禁密码登录
-        进入后还会按"Phase 08 强制对话流程"再走一遍逐项确认
+【08】SSH 加固
+  ✅ 默认: port=22022, allow_users=<allow-user>, 禁密码, 禁 root, deadman=5min
+  ⚠️ 高风险, 错配会锁死。进入后会按"Phase 08 强制对话流程"再逐项确认。
+  ⚠️ 云平台请先开放 22022 入站; 若 allow_users 跟你 SSH 用的不一致, 必须先改
+  可改: ssh_port / ssh_allow_users / ssh_permit_root / ssh_password_auth
+  关掉: 回 "跳过 08"
+
+【09】装 fail2ban (防 SSH 暴力破解)
+  ✅ 默认: 装, 监听 phase 08 的 ssh_port (跳过 08 时监听 22)
+            findtime=10min, maxretry=5, bantime=1h
+  关掉: 回 "跳过 09"
 ```
 
 **处理规则**：
 
 | 用户回答 | 处理 |
 |---|---|
-| 对每个可选 phase 都明确表态 (要 / 跳过) | 把答案补进对应参数, 进入"## 执行流程" |
-| 一句 "全跳过" 或 "全用默认" | 只跑必跑 phase (01/02/03/04/05/verify), 不再问 |
-| 只回答了一部分, 其他没提 | 把没提的当 "跳过", 但**执行前**再发一次"我准备跳过的 phase 是 X / Y / Z, 确认?", 用户确认才开跑 |
-| 用户说 "你看着办" / 不明确 | 默认全跳过, 但仍按上一行规则做最终确认 |
+| 一句 "全用默认" / "推荐设置" / "都按你说的" | 按上述默认全跑, phase 08 仍走强制对话流程 |
+| 对个别 phase 说 "跳过 X" 或改参数, 其他没提 | 没提的按推荐默认, 改的按用户说的, 不再二次确认 (默认是已知意图) |
+| 一句 "全跳过" | 只跑必跑 phase (01/02/03/04/05/verify), 不再问 |
+| 用户说 "你看着办" / 不明确 | 按推荐默认走, 跟"全用默认"等价 |
 
 **反面教材**（不要这样做）：
-- ❌ 直接按默认全跳过, 跑完才在 verify 输出里告诉用户"已跳过 02a / 02b / 06 / 07 / 08"
-- ❌ 把 5 个 phase 拆成 5 轮对话挨个问 (用户提过"不要中途反复打断")
-- ❌ 自作主张帮用户决定 install_zsh=true 之类的 (任何可选 phase 默认值就是 false / 跳过)
+- ❌ 把 6 个 phase 拆成 6 轮对话挨个问 (用户明确说过"不要中途反复打断")
+- ❌ 不 `whoami` 就直接用 `ssh_allow_users=ubuntu` 默认, 在非 ubuntu 用户上跑会锁死
+- ❌ 跳过 phase 08 的强制对话流程, 即便 `harden_ssh=true` 是默认值
 
 ---
 
@@ -134,8 +157,9 @@ claude   # 登录
 | 04 | Claude Code CLI | `scripts/04-claude-code.sh` | ❌ 用户态 | 必跑 |
 | 05 | git 身份 | `scripts/05-git-identity.sh` | ❌ | 必跑 |
 | 06 | 项目克隆 + 依赖 | `scripts/06-project.sh` | ❌ | `project_repo_url` 提供时才跑 |
-| 07 | plugins / skills | `scripts/07-plugins-skills.sh` | ❌ | `install_plugins_skills=true` 才跑 |
-| 08 | **SSH 加固** | `scripts/08-ssh-harden.sh` | ✅ | `harden_ssh=true` 才跑, **必须按下方对话流程**执行 |
+| 07 | plugins / skills | `scripts/07-plugins-skills.sh` | ❌ | `install_plugins_skills` 默认 true |
+| 08 | **SSH 加固** | `scripts/08-ssh-harden.sh` | ✅ | `harden_ssh` 默认 true, **必须按下方对话流程**执行 |
+| 09 | fail2ban (sshd jail) | `scripts/09-fail2ban.sh` | ✅ | `enable_fail2ban` 默认 true; 装在 08 之后, 监听 ssh_port |
 | -- | 总检查 | `scripts/verify.sh` | ❌ | 必跑 |
 
 每个脚本都是**幂等**的——重跑只会跳过已完成的部分。可以单独调用任意一个 phase, 不强制走完整序列。
@@ -215,8 +239,14 @@ if [ "${install_plugins_skills:-false}" = "true" ]; then
 fi
 
 # 可选 phase 08：高风险, 必须按下方「Phase 08 强制对话流程」执行, 不要"一气呵成"
-if [ "${harden_ssh:-false}" = "true" ]; then
+if [ "${harden_ssh:-true}" = "true" ]; then
   : # 见下文「Phase 08 强制对话流程」
+fi
+
+# 可选 phase 09：fail2ban
+# 透传 ssh_port: 如果 phase 08 跑了, 用 08 用过的端口; 否则默认 22 (传统 sshd 端口)
+if [ "${enable_fail2ban:-true}" = "true" ]; then
+  bash "$REPO_DIR/scripts/09-fail2ban.sh" --ssh-port "${ssh_port:-22}"
 fi
 
 bash "$REPO_DIR/scripts/lib/with-env.sh" -- bash "$REPO_DIR/scripts/verify.sh"
@@ -224,24 +254,29 @@ bash "$REPO_DIR/scripts/lib/with-env.sh" -- bash "$REPO_DIR/scripts/verify.sh"
 
 ### Phase 07 交互（重要）
 
-**不要** 默认安装 `templates/*.yaml` 里的任何条目, 这些只是常见推荐清单。流程：
+**默认推荐项**：YAML 里 `recommended: true` 的条目, 当前是
+- plugins: `superpowers` / `claude-mem` / `claude-hud`
+- skills:  `skill-creator` / `skill-vetter` / `find-skills`
+
+流程：
 
 1. 读取 `$REPO_DIR/templates/plugins.yaml` 和 `$REPO_DIR/templates/skills.yaml`
-2. 把每一项的 `id` / `description` / `side_effects` 完整呈现给用户
-3. 询问用户：选哪几项？（全跳过 / 全装 / 选编号 / 加自定义项）
-4. 只把用户**明确选中**的传给 `07-plugins-skills.sh` 的 `--selection`（JSON 数组）
+2. 在开场对话里已展示了默认勾选项 (见上方对话模板的【07】块)
+3. 用户回 "全用默认" / 没说要改 → selection = 所有 `recommended: true` 项
+4. 用户说 "07 加 xxx" → 加进 selection; 说 "不要 xxx" → 从 selection 剔除
+5. 用户想看完整清单 → 把每一项的 `id` / `description` / `side_effects` 全列出来再让选
 
-例：
+**示例 selection JSON（默认推荐）**：
 ```json
 {
-  "plugins": ["superpowers"],
-  "skills":  ["skill-creator", "skill-vetter"],
+  "plugins": ["superpowers", "claude-mem", "claude-hud"],
+  "skills":  ["skill-creator", "skill-vetter", "find-skills"],
   "extra_plugins": [],
   "extra_skills":  []
 }
 ```
 
-带 `side_effects` 提示的项（如 `claude-mem` 自动记录会话）必须当面读给用户确认, 不要静默勾选。
+⚠️ `claude-mem` 有 `side_effects` (自动记录所有会话内容到本地数据库, 隐私敏感) — 即使是默认推荐项, 开场对话模板里已显式提示, 用户没反对就视为知情同意。其他带 `side_effects` 的项 (context7 调外部服务, tushare-data 走 API 配额等) 也按相同规则处理。
 
 ---
 
@@ -330,7 +365,7 @@ apply 已经做了：备份 + 写新配置 + sshd -t + reload + 调度 deadman�
 
 ## 不在本 skill 范围内（明确划清）
 
-- **fail2ban / 入侵检测 / WAF**：本 skill 的 SSH 加固 phase 08 仅做配置层（端口 / 允许用户 / 禁密码 / 禁 root）, 不装 fail2ban 类运行时防御。
+- **入侵检测 / WAF / nftables 自定义规则**：phase 09 仅装 fail2ban + 配 sshd jail 防 SSH 暴力破解, 不做更复杂的防御层。
 - **域名 / 反代 / nginx / Docker**：超出"开发环境就绪"范畴。
 - **数据库安装**：项目自决, 用 `06-project.sh` 检测到 `docker-compose.yml` 时仅提示, 不自动执行。
 - **secret 写到 shell rc**：所有 token / API key 都引导用户写到 `<project>/.env`（且 gitignore 它）, 永不写 `~/.zshrc` / `~/.bashrc`。

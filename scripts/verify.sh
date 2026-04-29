@@ -70,12 +70,21 @@ else
   warn "Plugins:    无 installed_plugins.json（可能没装过 plugin, 或 Claude Code 还没初始化）"
 fi
 
-SKILLS_DIR="$HOME/.claude/skills"
-if [ -d "$SKILLS_DIR" ]; then
-  COUNT="$(find "$SKILLS_DIR" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) | wc -l | tr -d ' ')"
-  ok "Skills:     $COUNT in $SKILLS_DIR"
-else
-  warn "Skills:     $SKILLS_DIR 不存在"
+# skills 实际落地的目录可能是 ~/.agents/skills (新版 npx skills) 或 ~/.claude/skills (老版)
+SKILLS_FOUND=0
+for SKILLS_DIR in "$HOME/.agents/skills" "$HOME/.claude/skills"; do
+  if [ -d "$SKILLS_DIR" ]; then
+    COUNT="$(find "$SKILLS_DIR" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) | wc -l | tr -d ' ')"
+    [ "$COUNT" -gt 0 ] && ok "Skills:     $COUNT in $SKILLS_DIR" && SKILLS_FOUND=1
+  fi
+done
+[ "$SKILLS_FOUND" -eq 0 ] && warn "Skills:     ~/.agents/skills 和 ~/.claude/skills 都没找到"
+
+# codex skill 软链 (07-plugins-skills 装完后建的)
+CODEX_SKILLS="$HOME/.codex/skills"
+if [ -d "$CODEX_SKILLS" ]; then
+  CODEX_COUNT="$(find "$CODEX_SKILLS" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) | wc -l | tr -d ' ')"
+  ok "Codex skills: $CODEX_COUNT in $CODEX_SKILLS (链向 ~/.agents/skills/)"
 fi
 
 # bun（claude-mem 等 plugin 依赖）

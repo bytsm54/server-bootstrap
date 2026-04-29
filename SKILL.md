@@ -110,9 +110,9 @@ claude   # 登录
   要做: 给 git URL, 可选 project_dir 和 .env keys (如 TUSHARE_TOKEN,OPENAI_API_KEY)
 
 【07】装 Claude Code plugins / skills
-  ✅ 默认 plugins: superpowers
+  ✅ 默认 plugins: superpowers, claude-mem, claude-hud
   ✅ 默认 skills:  skill-creator, skill-vetter, find-skills
-  其他可选 plugins (claude-mem 隐私敏感 / claude-hud / web-access / pua)
+  其他可选 plugins (web-access / pua)
   其他可选 skills (frontend-design / docx / pdf / xlsx / pptx / context7 / tushare-data 等)
   我可以读完整清单给你, 想加直接说 "07 加 xxx"
 
@@ -158,7 +158,7 @@ claude   # 登录
 | 04a | Codex CLI | `scripts/04a-codex.sh` | ❌ 用户态 | 必跑（`npm install -g @openai/codex`, 由 `bootstrap.sh` 调用） |
 | 05 | git 身份 | `scripts/05-git-identity.sh` | ❌ | 必跑 |
 | 06 | 项目克隆 + 依赖 | `scripts/06-project.sh` | ❌ | `project_repo_url` 提供时才跑 |
-| 07 | plugins / skills | `scripts/07-plugins-skills.sh` | ❌ | `install_plugins_skills` 默认 true |
+| 07 | plugins / skills | `scripts/07-plugins-skills.sh` | ❌ | `install_plugins_skills` 默认 true; 装完 skill 后逐项软链到 `~/.codex/skills/` 让 codex 共享 |
 | 08 | **SSH 加固** | `scripts/08-ssh-harden.sh` | ✅ | `harden_ssh` 默认 true, **必须按下方对话流程**执行 |
 | 09 | fail2ban (sshd jail) | `scripts/09-fail2ban.sh` | ✅ | `enable_fail2ban` 默认 true; 装在 08 之后, 监听 ssh_port |
 | -- | 总检查 | `scripts/verify.sh` | ❌ | 必跑 |
@@ -258,7 +258,7 @@ bash "$REPO_DIR/scripts/lib/with-env.sh" -- bash "$REPO_DIR/scripts/verify.sh"
 ### Phase 07 交互（重要）
 
 **默认推荐项**：YAML 里 `recommended: true` 的条目, 当前是
-- plugins: `superpowers`
+- plugins: `superpowers` / `claude-mem` / `claude-hud`
 - skills:  `skill-creator` / `skill-vetter` / `find-skills`
 
 流程：
@@ -272,7 +272,7 @@ bash "$REPO_DIR/scripts/lib/with-env.sh" -- bash "$REPO_DIR/scripts/verify.sh"
 **示例 selection JSON（默认推荐）**：
 ```json
 {
-  "plugins": ["superpowers"],
+  "plugins": ["superpowers", "claude-mem", "claude-hud"],
   "skills":  ["skill-creator", "skill-vetter", "find-skills"],
   "extra_plugins": [],
   "extra_skills":  []

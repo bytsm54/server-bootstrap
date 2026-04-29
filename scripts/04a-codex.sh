@@ -42,10 +42,37 @@ fi
 ok "codex: $(codex --version 2>&1 | head -1)"
 
 # 提前 mkdir ~/.codex/skills, 让 codex 一装完就有"插槽"
-# (phase 07 装完 Claude skill 后会往这个目录里逐项软链, 但 phase 07 可能被
-#  用户跳过, 或源目录为空, 逻辑就不会进入 mkdir 那段。在这里 mkdir 保证目录
-#  始终存在, 用户用 ls 能看见。)
+# (phase 07a 装完 Claude skill 后会往这个目录里逐项软链, 但 phase 07a 可能被
+#  跳过或源目录为空, 软链分支不会进入 mkdir。在这里 mkdir 保证目录始终存在。)
 mkdir -p "$HOME/.codex/skills"
-ok "已建 ~/.codex/skills/ (phase 07 会往里灌软链)"
+ok "已建 ~/.codex/skills/ (phase 07a 会往里灌软链)"
+
+# --- 追加 memories 配置到 ~/.codex/config.toml (幂等, 用 marker 检测)
+# 注意: 如果用户预先有 [features] 段, 这里追加会让 TOML 出现重复段; 实践中
+# fresh 装完 codex 时 config.toml 一般空 / 不存在, 不冲突。
+CONFIG_FILE="$HOME/.codex/config.toml"
+MARKER="# server-bootstrap:codex-memories (managed by 04a-codex.sh, do not edit)"
+
+if [ -f "$CONFIG_FILE" ] && grep -qF "$MARKER" "$CONFIG_FILE" 2>/dev/null; then
+  ok "config.toml 已含 memories 段, 跳过"
+else
+  log "追加 memories 配置 → $CONFIG_FILE"
+  # 文件已存在且非空, 末尾没换行 → 补一个; 再多补一个空行隔开
+  if [ -f "$CONFIG_FILE" ] && [ -s "$CONFIG_FILE" ]; then
+    [ -n "$(tail -c1 "$CONFIG_FILE" 2>/dev/null)" ] && echo "" >> "$CONFIG_FILE"
+    echo "" >> "$CONFIG_FILE"
+  fi
+  cat >> "$CONFIG_FILE" <<EOF
+$MARKER
+[features]
+memories = true
+
+[memories]
+generate_memories = true
+use_memories = true
+disable_on_external_context = true
+EOF
+  ok "memories 配置已追加"
+fi
 
 log "完成"

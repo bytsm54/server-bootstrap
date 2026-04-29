@@ -40,4 +40,12 @@ if ! command -v codex >/dev/null 2>&1; then
 fi
 
 ok "codex: $(codex --version 2>&1 | head -1)"
+
+# 提前 mkdir ~/.codex/skills, 让 codex 一装完就有"插槽"
+# (phase 07 装完 Claude skill 后会往这个目录里逐项软链, 但 phase 07 可能被
+#  用户跳过, 或源目录为空, 逻辑就不会进入 mkdir 那段。在这里 mkdir 保证目录
+#  始终存在, 用户用 ls 能看见。)
+mkdir -p "$HOME/.codex/skills"
+ok "已建 ~/.codex/skills/ (phase 07 会往里灌软链)"
+
 log "完成"

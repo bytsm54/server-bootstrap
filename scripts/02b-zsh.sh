@@ -58,7 +58,7 @@ else
 fi
 
 # --- 1. apt 包
-PKGS=(zsh zsh-syntax-highlighting zsh-autosuggestions)
+PKGS=(zsh zsh-syntax-highlighting zsh-autosuggestions fonts-powerline)
 MISSING=()
 for p in "${PKGS[@]}"; do
   dpkg -s "$p" >/dev/null 2>&1 || MISSING+=("$p")

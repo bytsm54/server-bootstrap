@@ -28,6 +28,15 @@ case ":$PATH:" in
   *) export PATH="$HOME/.local/bin:$PATH" ;;
 esac
 
+# --- bun（claude-mem 等 plugin 依赖）
+if [ -d "$HOME/.bun/bin" ]; then
+  export BUN_INSTALL="$HOME/.bun"
+  case ":$PATH:" in
+    *":$HOME/.bun/bin:"*) ;;
+    *) export PATH="$HOME/.bun/bin:$PATH" ;;
+  esac
+fi
+
 # --- 把 nvm 当前 node 路径暴露给子进程（npm/npx 相关）
 if command -v node >/dev/null 2>&1; then
   NODE_BIN="$(dirname "$(command -v node)")"

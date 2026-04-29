@@ -72,6 +72,23 @@ else
   warn "Skills:     $SKILLS_DIR 不存在"
 fi
 
+# bun（claude-mem 等 plugin 依赖）
+if [ -x "$HOME/.bun/bin/bun" ]; then
+  ok "bun:        $("$HOME/.bun/bin/bun" --version)"
+  # 校验三个 rc 文件都有 bun PATH 注入
+  MISSING_RC=""
+  for rc in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.zshenv"; do
+    if [ -f "$rc" ] && ! grep -q 'server-bootstrap:bun-path' "$rc" 2>/dev/null; then
+      MISSING_RC="$MISSING_RC $(basename "$rc")"
+    fi
+  done
+  if [ -n "$MISSING_RC" ]; then
+    warn "bun PATH 缺失 rc 文件:$MISSING_RC（claude-mem hook 可能找不到 bun）"
+  fi
+elif command -v bun >/dev/null 2>&1; then
+  ok "bun:        $(bun --version) (非 ~/.bun, 自定义安装位置)"
+fi
+
 # uv（如果项目用了 Python）
 if command -v uv >/dev/null 2>&1; then
   ok "uv:         $(uv --version)"

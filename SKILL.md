@@ -152,7 +152,7 @@ claude   # 登录
 | 02 | apt 基础依赖 | `scripts/02-base-deps.sh` | ✅ | 必跑, 已装则整体跳过 |
 | 02a | hostname + timezone | `scripts/02a-system.sh` | ✅（hostnamectl/timedatectl） | `hostname` 或 `timezone` 提供时才跑 |
 | 02b | zsh + oh-my-zsh | `scripts/02b-zsh.sh` | ✅（apt + chsh） | `install_zsh=true` 才跑 |
-| 03 | nvm + Node | `scripts/03-node.sh` | ❌ 用户态 | 必跑 |
+| 03 | nvm + Node + bun | `scripts/03-node.sh` | ❌ 用户态 | 必跑（bun 是 claude-mem 等 plugin hook 依赖, 同时装 .bashrc/.zshrc/.zshenv 三处 PATH 注入） |
 | 04 | Claude Code CLI | `scripts/04-claude-code.sh` | ❌ 用户态 | 必跑 |
 | 05 | git 身份 | `scripts/05-git-identity.sh` | ❌ | 必跑 |
 | 06 | 项目克隆 + 依赖 | `scripts/06-project.sh` | ❌ | `project_repo_url` 提供时才跑 |

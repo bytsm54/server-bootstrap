@@ -100,4 +100,69 @@ case "$NPM_REGISTRY" in
 esac
 
 ok "registry: $(npm config get registry)"
+
+# --- 4. bun（用户态, claude-mem 等 plugin 的 SessionStart hook 依赖）
+# 装到 ~/.bun/bin/bun, 不需要 sudo。
+if [ -x "$HOME/.bun/bin/bun" ]; then
+  ok "bun: $("$HOME/.bun/bin/bun" --version) (已装)"
+else
+  log "装 bun (用户态)"
+  if ! curl -fsSL https://bun.sh/install | bash; then
+    err "bun 安装失败"
+    exit 1
+  fi
+  if [ ! -x "$HOME/.bun/bin/bun" ]; then
+    err "bun installer 跑完但 ~/.bun/bin/bun 不存在"
+    exit 1
+  fi
+  ok "bun: $("$HOME/.bun/bin/bun" --version)"
+fi
+
+# 管理 bun PATH 在 .bashrc / .zshrc / .zshenv 三个 rc 文件:
+#   - 用我们自己的 marker 块, 幂等
+#   - 清掉 bun installer 留下的 "# bun" 旧块 (installer 不幂等, 跑两次会重复)
+#   - .zshenv 关键: claude-mem 的 SessionStart hook 用 zsh -lc 跑命令, 这种
+#     非交互登录 shell 不读 .zshrc, 只读 .zshenv / .zprofile。少了这步, hook
+#     启动后报 "Bun not found"
+log "管理 bun PATH 注入 (.bashrc / .zshrc / .zshenv)"
+python3 - <<'PY'
+import os, re
+HOME = os.environ['HOME']
+MARKER = '# server-bootstrap:bun-path (managed by 03-node.sh, do not edit)'
+BLOCK = (
+    MARKER + '\n'
+    'export BUN_INSTALL="$HOME/.bun"\n'
+    'case ":$PATH:" in *":$BUN_INSTALL/bin:"*) ;; *) export PATH="$BUN_INSTALL/bin:$PATH" ;; esac\n'
+)
+# bun installer 的标准块: # bun \n export BUN_INSTALL=... \n export PATH=...BUN_INSTALL...
+INSTALLER_BLOCK_RE = re.compile(
+    r'\n*# bun\nexport BUN_INSTALL=[^\n]*\nexport PATH=[^\n]*BUN_INSTALL[^\n]*\n',
+    re.MULTILINE,
+)
+
+def manage(path):
+    if not os.path.exists(path):
+        open(path, 'a').close()
+    with open(path) as f:
+        content = f.read()
+    new, removed = INSTALLER_BLOCK_RE.subn('', content)
+    actions = []
+    if removed:
+        actions.append(f'清掉 {removed} 个 installer 旧块')
+    if MARKER not in new:
+        if new and not new.endswith('\n'):
+            new += '\n'
+        new += '\n' + BLOCK
+        actions.append('追加 marker 块')
+    if not actions:
+        actions.append('已是目标状态')
+    if new != content:
+        with open(path, 'w') as f:
+            f.write(new)
+    print(f'  ✅ {os.path.basename(path)}: ' + ' / '.join(actions))
+
+for rc in ('.bashrc', '.zshrc', '.zshenv'):
+    manage(os.path.join(HOME, rc))
+PY
+
 log "完成"

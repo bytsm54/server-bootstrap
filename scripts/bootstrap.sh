@@ -92,14 +92,19 @@ run_phase "Phase 03 — Node (nvm)" \
 run_phase "Phase 04 — Claude Code CLI" \
   bash "$REPO_DIR/scripts/04-claude-code.sh" --method "${CLAUDE_INSTALL_METHOD:-auto}" ${CLAUDE_VERSION:+--version "$CLAUDE_VERSION"}
 
+run_phase "Phase 04a — Codex CLI (npm -g @openai/codex)" \
+  bash "$REPO_DIR/scripts/lib/with-env.sh" -- bash "$REPO_DIR/scripts/04a-codex.sh"
+
 # --- 4. 总结 & 下一步
 NODE_VER="(未加载 nvm)"
 CLAUDE_VER="(未加载)"
+CODEX_VER="(未装)"
 [ -s "$HOME/.nvm/nvm.sh" ] && (
   . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1
   command -v node >/dev/null 2>&1 && node --version
 ) >/tmp/.bootstrap-node-ver 2>/dev/null && NODE_VER=$(cat /tmp/.bootstrap-node-ver) && rm -f /tmp/.bootstrap-node-ver
 [ -x "$HOME/.local/bin/claude" ] && CLAUDE_VER=$("$HOME/.local/bin/claude" --version 2>/dev/null || echo "已装")
+CODEX_VER=$(bash "$REPO_DIR/scripts/lib/with-env.sh" -- codex --version 2>/dev/null | head -1 || echo "(未装)")
 
 printf '\n\033[1;32m✅ bootstrap.sh 完成\033[0m\n\n'
 
@@ -107,6 +112,7 @@ cat <<EOF
 已装:
   Node:        $NODE_VER
   Claude Code: $CLAUDE_VER
+  Codex:       $CODEX_VER
   SKILL:       $SKILL_LINK
 
 下一步:

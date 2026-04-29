@@ -46,6 +46,12 @@ else
   miss "Claude Code: 未找到（应在 ~/.local/bin/claude）"
 fi
 
+if command -v codex >/dev/null 2>&1; then
+  ok "Codex:       $(codex --version 2>/dev/null | head -1 || echo 'version unknown')"
+else
+  miss "Codex:       未找到（应通过 npm install -g @openai/codex 装好）"
+fi
+
 # git identity
 GN="$(git config --global user.name  2>/dev/null || true)"
 GE="$(git config --global user.email 2>/dev/null || true)"

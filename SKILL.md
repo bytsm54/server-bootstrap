@@ -110,9 +110,10 @@ claude   # 登录
   要做: 给 git URL, 可选 project_dir 和 .env keys (如 TUSHARE_TOKEN,OPENAI_API_KEY)
 
 【07】装 Claude Code plugins / skills
-  ✅ 默认 plugins: superpowers, claude-mem, claude-hud
+  ✅ 默认 plugins: superpowers
   ✅ 默认 skills:  skill-creator, skill-vetter, find-skills
-  其他可选项 (frontend-design / docx / pdf / xlsx / pptx / context7 / tushare-data 等)
+  其他可选 plugins (claude-mem 隐私敏感 / claude-hud / web-access / pua)
+  其他可选 skills (frontend-design / docx / pdf / xlsx / pptx / context7 / tushare-data 等)
   我可以读完整清单给你, 想加直接说 "07 加 xxx"
 
 【08】SSH 加固
@@ -154,6 +155,7 @@ claude   # 登录
 | 02b | zsh + oh-my-zsh | `scripts/02b-zsh.sh` | ✅（apt + chsh） | `install_zsh=true` 才跑 |
 | 03 | nvm + Node + bun | `scripts/03-node.sh` | ❌ 用户态 | 必跑（bun 是 claude-mem 等 plugin hook 依赖, 同时装 .bashrc/.zshrc/.zshenv 三处 PATH 注入） |
 | 04 | Claude Code CLI | `scripts/04-claude-code.sh` | ❌ 用户态 | 必跑 |
+| 04a | Codex CLI | `scripts/04a-codex.sh` | ❌ 用户态 | 必跑（`npm install -g @openai/codex`, 由 `bootstrap.sh` 调用） |
 | 05 | git 身份 | `scripts/05-git-identity.sh` | ❌ | 必跑 |
 | 06 | 项目克隆 + 依赖 | `scripts/06-project.sh` | ❌ | `project_repo_url` 提供时才跑 |
 | 07 | plugins / skills | `scripts/07-plugins-skills.sh` | ❌ | `install_plugins_skills` 默认 true |
@@ -256,7 +258,7 @@ bash "$REPO_DIR/scripts/lib/with-env.sh" -- bash "$REPO_DIR/scripts/verify.sh"
 ### Phase 07 交互（重要）
 
 **默认推荐项**：YAML 里 `recommended: true` 的条目, 当前是
-- plugins: `superpowers` / `claude-mem` / `claude-hud`
+- plugins: `superpowers`
 - skills:  `skill-creator` / `skill-vetter` / `find-skills`
 
 流程：
@@ -270,7 +272,7 @@ bash "$REPO_DIR/scripts/lib/with-env.sh" -- bash "$REPO_DIR/scripts/verify.sh"
 **示例 selection JSON（默认推荐）**：
 ```json
 {
-  "plugins": ["superpowers", "claude-mem", "claude-hud"],
+  "plugins": ["superpowers"],
   "skills":  ["skill-creator", "skill-vetter", "find-skills"],
   "extra_plugins": [],
   "extra_skills":  []

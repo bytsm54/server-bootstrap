@@ -179,14 +179,16 @@ Claude Code 的 `Bash` 工具每次起新 shell, **不会** 自动 source `.zshr
 
 ### 2. 仓库定位
 
-执行前把 `REPO_DIR` 指向本仓库的本地 clone（默认 `~/server-bootstrap`）。所有 phase 脚本都假设可通过 `$REPO_DIR/scripts/...` 找到自己。
+**仓库在 bootstrap.sh 阶段已经 clone 到 `~/server-bootstrap`** — 进 SKILL 时一定存在, agent 不要再宣布"克隆仓库"作为步骤, 直接进 phase 01。
+
+只需要导出 `REPO_DIR` 给 phase 脚本使用; 顺带 `git pull` 拉最新（bootstrap.sh 跟 SKILL 调用之间可能隔了一段时间, 仓库可能有更新）：
 
 ```bash
 export REPO_DIR="${REPO_DIR:-$HOME/server-bootstrap}"
-[ -d "$REPO_DIR/.git" ] \
-  && git -C "$REPO_DIR" pull --ff-only \
-  || git clone https://github.com/bytsm54/server-bootstrap.git "$REPO_DIR"
+git -C "$REPO_DIR" pull --ff-only --quiet 2>/dev/null || true
 ```
+
+如果罕见地仓库不见了（用户手动 rm 了或 bootstrap.sh 没跑）, agent 应**直接报错**让用户重跑 bootstrap.sh, 不要在 SKILL 里偷偷重新 clone。
 
 ### 3. Phase 之间的状态
 

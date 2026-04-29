@@ -317,12 +317,16 @@ if [ -n "$SOCKET_UNIT" ]; then
   SOCKET_OVERRIDE="$(socket_override_path "$SOCKET_UNIT")"
   log "检测到 socket activation ($SOCKET_UNIT), 写 ListenStream override → $SOCKET_OVERRIDE"
   "${SUDO[@]}" mkdir -p "$(dirname "$SOCKET_OVERRIDE")"
-  # ListenStream= 空行用于清空原值, 否则 systemd 会追加而非替换
+  # ListenStream= 空行清空原值, 否则 systemd 追加而非替换。
+  # 必须显式写 0.0.0.0:$PORT + [::]:$PORT 双栈监听 — 上游 ssh.socket 的 [Socket]
+  # 段带了 BindIPv6Only=ipv6-only, 单写 "ListenStream=$PORT" 会被强制 IPv6-only,
+  # IPv4 客户端连不进, ss 只看得到 tcp6 :::$PORT。这跟上游的 IPv4+IPv6 双栈写法对齐。
   cat <<EOF | "${SUDO[@]}" tee "$SOCKET_OVERRIDE" >/dev/null
 # Managed by server-bootstrap 08-ssh-harden — generated $TS
 [Socket]
 ListenStream=
-ListenStream=$PORT
+ListenStream=0.0.0.0:$PORT
+ListenStream=[::]:$PORT
 EOF
   "${SUDO[@]}" chmod 644 "$SOCKET_OVERRIDE"
   "${SUDO[@]}" systemctl daemon-reload

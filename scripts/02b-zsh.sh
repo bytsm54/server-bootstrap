@@ -7,7 +7,10 @@
 # 行为：
 #   1. apt 装 zsh, zsh-syntax-highlighting, zsh-autosuggestions（已装则跳过）
 #   2. 装 oh-my-zsh 到 ~/.oh-my-zsh（用户态, 已存在则跳过, 不会覆盖 ~/.zshrc）
-#   3. 启用插件 git/sudo/zsh-syntax-highlighting/zsh-autosuggestions
+#   3. plugins=(git sudo) — 只放真正符合 omz plugin 结构的项
+#      apt 装的 zsh-syntax-highlighting / zsh-autosuggestions 落在 /usr/share/, 不是
+#      omz plugin 结构, 写进 plugins=() 会触发 "plugin not found" 告警, 因此通过
+#      .zshrc 末尾的 source 行加载（见步骤末尾, 这才是真正让功能工作的地方）。
 #   4. 设 ZSH_THEME=<theme>（默认 agnoster, 任何 oh-my-zsh 内置主题名都行）
 #   5. 默认 shell 改为 zsh（仅当 --default-shell yes, 默认 yes, 需要 sudo 走 chsh）
 #
@@ -100,19 +103,29 @@ fi
 # --- 3. 启用插件（编辑 ~/.zshrc 的 plugins=(...) 行）
 ZSHRC="$USER_HOME/.zshrc"
 if [ -f "$ZSHRC" ]; then
-  WANT_PLUGINS=(git sudo zsh-syntax-highlighting zsh-autosuggestions)
+  # 只把"真 omz plugin"放进 plugins=()
+  WANT_PLUGINS=(git sudo)
+  # apt 装的两个包名 — 历史上的 02b 把它们错放进 plugins=(), 触发 not found 告警。
+  # 现在通过下面的 source 行加载, 因此要从 plugins=() 里剔除（覆盖旧版脚本的产物）。
+  BAD_PLUGINS=(zsh-syntax-highlighting zsh-autosuggestions)
+
   if grep -qE '^plugins=\(' "$ZSHRC"; then
     CUR_LINE="$(grep -m1 -E '^plugins=\(' "$ZSHRC")"
     NEEDS_UPDATE=0
     for p in "${WANT_PLUGINS[@]}"; do
-      grep -qE "(^|\()[[:space:]]+?$p([[:space:]]|\))" <<<"$CUR_LINE" || NEEDS_UPDATE=1
+      grep -qE "(^|\()[[:space:]]*$p([[:space:]]|\))" <<<"$CUR_LINE" || NEEDS_UPDATE=1
+    done
+    for p in "${BAD_PLUGINS[@]}"; do
+      if grep -qE "(^|\()[[:space:]]*$p([[:space:]]|\))" <<<"$CUR_LINE"; then
+        NEEDS_UPDATE=1
+      fi
     done
     if [ "$NEEDS_UPDATE" -eq 1 ]; then
-      log "更新 ~/.zshrc 的 plugins=(...) 行"
+      log "更新 ~/.zshrc 的 plugins=(...) 行（剔除 apt 包名, 它们走 source 加载）"
       sed -i.bak -E "s|^plugins=\([^)]*\)|plugins=(${WANT_PLUGINS[*]})|" "$ZSHRC"
       ok "plugins 已设为：${WANT_PLUGINS[*]}（备份在 ~/.zshrc.bak）"
     else
-      ok "plugins=() 已包含目标插件"
+      ok "plugins=() 已是目标值"
     fi
   else
     log "在 ~/.zshrc 末尾追加 plugins=(...)"
@@ -124,7 +137,8 @@ if [ -f "$ZSHRC" ]; then
     ok "plugins 已追加"
   fi
 
-  # 让 apt 装的高亮 / 自动建议在 oh-my-zsh 缺失时也能工作（双保险）
+  # apt 装的 zsh-syntax-highlighting / zsh-autosuggestions 不是 omz plugin 结构,
+  # 直接 source 它们的入口文件 — 这是让功能真正工作的唯一机制。
   for srcline in \
     "source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" \
     "source /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh"; do

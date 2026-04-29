@@ -6,36 +6,48 @@
 #
 # 字段说明：
 #   id           安装命令简短标识（agent 用它对照用户选择）
-#   install      传给 `claude plugins install` 的字符串
+#   install      传给 `claude plugins install` 的字符串, 形如 <plugin>@<marketplace-name>
+#   marketplace  （可选）GH owner/repo, 传给 `claude plugins marketplace add` 用于注册 marketplace
+#                  - 如果省略, 假定 marketplace 已是 Claude Code 内置（如 claude-plugins-official）
+#                    或用户已手动 add 过, 否则 install 会报 "marketplace not found"
+#                  - phase 07 会在 install 前自动跑 `marketplace add <marketplace>`（幂等, 已有则 no-op）
 #   description  一句话功能描述
 #   side_effects 副作用 / 隐私 / 性能注意。"无" 表示无副作用
+#
+# 注意：marketplace 名（@ 后面那段）≠ GH owner。例如 jarrodwatts/claude-hud 仓库的 marketplace
+#      名实际是 "claude-hud"（在 claude plugins marketplace list 里能看到）。写错会装不上。
 #
 # 增删条目：直接编辑此文件即可, 不需要改任何脚本。
 
 plugins:
   - id: superpowers
     install: superpowers@claude-plugins-official
+    # claude-plugins-official 是 Claude Code 内置 marketplace, 无需 add
     description: 通用工作流增强（brainstorming / TDD / debugging / 计划与执行 等系列 skills）
     side_effects: 无（仅增加可用 skill）
 
   - id: claude-mem
     install: claude-mem@thedotmack
+    marketplace: thedotmack/claude-mem
     description: 跨会话持久化记忆 + 搜索
     side_effects: ⚠️ 会自动记录所有会话内容到本地数据库, 并在每次会话启动时把摘要塞进上下文。
                  隐私敏感, 慎选。
 
   - id: claude-hud
-    install: claude-hud@jarrodwatts
+    install: claude-hud@claude-hud
+    marketplace: jarrodwatts/claude-hud
     description: 终端状态栏 HUD（显示 token 用量等）
     side_effects: 修改 ~/.claude/settings.json 的 statusLine 配置。
 
   - id: web-access
     install: web-access@web-access
+    # marketplace: <gh-owner>/<repo>  # TODO: 填入 GH 来源后才能 fresh install 直装
     description: 让 Claude Code 通过工具访问网页内容
     side_effects: 无（按需调用）
 
   - id: pua
     install: pua@pua-skills
+    # marketplace: <gh-owner>/<repo>  # TODO: 填入 GH 来源后才能 fresh install 直装
     description: 第三方 PUA skills 集合（特定中文场景）
     side_effects: 个性化倾向较强, 多数项目用不上。
 

@@ -42,6 +42,23 @@ DROPIN_NAME=00-server-bootstrap.conf
 BACKUP_DIR=/var/backups/sshd-bootstrap
 DEADMAN_FILE=/var/run/sshd-bootstrap-deadman.atjob
 
+# Ubuntu 22.04+ / Debian 12+ 用 systemd socket activation 持有 listening fd,
+# sshd_config 的 Port 指令会被旁路。此函数返回当前 active 的 socket 单元名。
+detect_socket_unit() {
+  for unit in ssh.socket sshd.socket; do
+    if "${SUDO[@]}" systemctl is-active --quiet "$unit" 2>/dev/null; then
+      echo "$unit"
+      return 0
+    fi
+  done
+  return 1
+}
+
+socket_override_path() {
+  local unit="$1"
+  echo "/etc/systemd/system/${unit}.d/override.conf"
+}
+
 # --- sudo 包装
 if [ "$(id -u)" -ne 0 ]; then
   if ! command -v sudo >/dev/null 2>&1; then
@@ -52,6 +69,9 @@ if [ "$(id -u)" -ne 0 ]; then
 else
   SUDO=()
 fi
+
+# 必须在 SUDO 定义之后才能用 systemctl 探测
+SOCKET_UNIT="$(detect_socket_unit || true)"
 
 # --- 解析模式
 MODE="${1:-}"; shift || true
@@ -103,11 +123,30 @@ if [ "$MODE" = "rollback" ]; then
     log "手动回滚到 $LATEST"
   fi
 
-  # 移除 drop-in
+  # 移除 drop-in（apply 时创建, 备份不含, tar xzf 不会删）
   "${SUDO[@]}" rm -f "$SSHD_DROPIN_DIR/$DROPIN_NAME"
-  # 解包恢复
+
+  # 解包恢复 sshd_config 主文件 + 备份里包含的 socket override（若 pre-apply 就存在）
   "${SUDO[@]}" tar xzf "$LATEST" -C /
-  # 校验
+
+  # 处理 socket override：
+  #   - 如果文件还在但备份里不包含它 → 是 apply 时新建的, 删除
+  #   - 然后 daemon-reload + 重启 socket, 让"恢复后的"配置（不管是有还是没有 override）生效
+  if [ -n "$SOCKET_UNIT" ]; then
+    SOCKET_OVERRIDE="$(socket_override_path "$SOCKET_UNIT")"
+    REL_PATH="${SOCKET_OVERRIDE#/}"
+    if "${SUDO[@]}" test -f "$SOCKET_OVERRIDE" && \
+       ! "${SUDO[@]}" tar tzf "$LATEST" 2>/dev/null | grep -qx "$REL_PATH"; then
+      log "删除 apply 时新建的 $SOCKET_UNIT override"
+      "${SUDO[@]}" rm -f "$SOCKET_OVERRIDE"
+    fi
+    log "daemon-reload + 重启 $SOCKET_UNIT, 让恢复后的配置生效"
+    "${SUDO[@]}" systemctl daemon-reload
+    "${SUDO[@]}" systemctl restart "$SOCKET_UNIT" || \
+      warn "重启 $SOCKET_UNIT 失败, 端口可能未恢复"
+  fi
+
+  # 校验恢复后的 sshd_config
   if ! "${SUDO[@]}" sshd -t 2>/dev/null; then
     err "回滚后 sshd -t 仍失败, 可能配置已损坏, 不要 reload sshd！"
     err "请人工 ssh 进去（旧端口的会话还活着）查 $SSHD_MAIN"
@@ -208,9 +247,12 @@ fi
 TS="$(date +%Y%m%d-%H%M%S)"
 "${SUDO[@]}" mkdir -p "$BACKUP_DIR"
 BACKUP_FILE="$BACKUP_DIR/sshd-$TS.tar.gz"
-log "备份 /etc/ssh → $BACKUP_FILE"
-"${SUDO[@]}" tar czf "$BACKUP_FILE" -C / etc/ssh/sshd_config etc/ssh/sshd_config.d 2>/dev/null || \
-  "${SUDO[@]}" tar czf "$BACKUP_FILE" -C / etc/ssh/sshd_config 2>/dev/null
+log "备份 /etc/ssh（+socket override 如有）→ $BACKUP_FILE"
+BACKUP_PATHS=(etc/ssh/sshd_config)
+"${SUDO[@]}" test -d /etc/ssh/sshd_config.d         && BACKUP_PATHS+=(etc/ssh/sshd_config.d)
+"${SUDO[@]}" test -d /etc/systemd/system/ssh.socket.d  && BACKUP_PATHS+=(etc/systemd/system/ssh.socket.d)
+"${SUDO[@]}" test -d /etc/systemd/system/sshd.socket.d && BACKUP_PATHS+=(etc/systemd/system/sshd.socket.d)
+"${SUDO[@]}" tar czf "$BACKUP_FILE" -C / "${BACKUP_PATHS[@]}"
 ok "备份完成"
 
 # --- 检测主 sshd_config 是否有 Include 指令
@@ -266,6 +308,68 @@ log "systemctl reload sshd（保活当前会话）"
   "${SUDO[@]}" systemctl reload sshd 2>/dev/null || \
   { err "reload 失败"; exit 1; }
 ok "sshd reloaded"
+
+# --- socket activation 处理
+# Ubuntu 22.04+ / Debian 12+: ssh.socket 持有 listening fd, sshd_config 的 Port 被旁路
+# 必须改 socket 单元的 ListenStream, 然后 restart ssh.socket（不影响已建立的 SSH 会话）
+SOCKET_OVERRIDE=""
+if [ -n "$SOCKET_UNIT" ]; then
+  SOCKET_OVERRIDE="$(socket_override_path "$SOCKET_UNIT")"
+  log "检测到 socket activation ($SOCKET_UNIT), 写 ListenStream override → $SOCKET_OVERRIDE"
+  "${SUDO[@]}" mkdir -p "$(dirname "$SOCKET_OVERRIDE")"
+  # ListenStream= 空行用于清空原值, 否则 systemd 会追加而非替换
+  cat <<EOF | "${SUDO[@]}" tee "$SOCKET_OVERRIDE" >/dev/null
+# Managed by server-bootstrap 08-ssh-harden — generated $TS
+[Socket]
+ListenStream=
+ListenStream=$PORT
+EOF
+  "${SUDO[@]}" chmod 644 "$SOCKET_OVERRIDE"
+  "${SUDO[@]}" systemctl daemon-reload
+  log "重启 $SOCKET_UNIT（仅切换 listening fd, 已建立的 SSH 会话不受影响）"
+  if ! "${SUDO[@]}" systemctl restart "$SOCKET_UNIT"; then
+    err "重启 $SOCKET_UNIT 失败, 立即回滚"
+    "${SUDO[@]}" rm -f "$SOCKET_OVERRIDE"
+    "${SUDO[@]}" systemctl daemon-reload
+    "${SUDO[@]}" systemctl restart "$SOCKET_UNIT" 2>/dev/null || true
+    if [ "$USE_DROPIN" -eq 1 ]; then
+      "${SUDO[@]}" rm -f "$SSHD_DROPIN_DIR/$DROPIN_NAME"
+    fi
+    "${SUDO[@]}" tar xzf "$BACKUP_FILE" -C /
+    exit 1
+  fi
+  ok "$SOCKET_UNIT 已切换到端口 $PORT"
+else
+  log "未检测到 socket activation, 走传统 sshd 直接 listen 模式"
+fi
+
+# --- 实际端口监听验证（不能只信 sshd -t 和 reload）
+log "验证端口 $PORT 实际监听"
+PORT_LISTEN_OK=0
+for _ in 1 2 3 4 5; do
+  if "${SUDO[@]}" ss -tlnH 2>/dev/null | awk '{print $4}' | grep -qE "[:.]$PORT\$"; then
+    PORT_LISTEN_OK=1
+    break
+  fi
+  sleep 1
+done
+if [ "$PORT_LISTEN_OK" -ne 1 ]; then
+  err "端口 $PORT 没有任何进程监听！立即内联回滚"
+  err "可能原因：socket activation 切换失败 / 端口已被占用 / sshd 启动失败"
+  if [ -n "$SOCKET_OVERRIDE" ] && "${SUDO[@]}" test -f "$SOCKET_OVERRIDE"; then
+    "${SUDO[@]}" rm -f "$SOCKET_OVERRIDE"
+    "${SUDO[@]}" systemctl daemon-reload
+    "${SUDO[@]}" systemctl restart "$SOCKET_UNIT" 2>/dev/null || true
+  fi
+  if [ "$USE_DROPIN" -eq 1 ]; then
+    "${SUDO[@]}" rm -f "$SSHD_DROPIN_DIR/$DROPIN_NAME"
+  fi
+  "${SUDO[@]}" tar xzf "$BACKUP_FILE" -C /
+  "${SUDO[@]}" systemctl reload ssh 2>/dev/null || \
+    "${SUDO[@]}" systemctl reload sshd 2>/dev/null || true
+  exit 1
+fi
+ok "端口 $PORT 已确认监听"
 
 # --- 调度 deadman
 if [ "$USE_DEADMAN" -eq 1 ]; then

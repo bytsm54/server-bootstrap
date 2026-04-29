@@ -118,30 +118,42 @@ skills_yaml  = load_yaml_lite(s_yaml)
 
 selection = json.loads(selection_raw)
 
-def find_install(items, item_id):
+def find_item(items, item_id):
     for it in items:
         if it.get("id") == item_id:
-            return it.get("install") or ""
+            return it
     return None
 
 cmds = []
+added_marketplaces = set()  # 同一 marketplace 多个 plugin 时只 add 一次
+
+def queue_marketplace(mkt):
+    """marketplace add <source> 是幂等操作（已存在会报错但不影响后续）, 用 || true 兜底"""
+    if not mkt or mkt in added_marketplaces:
+        return
+    added_marketplaces.add(mkt)
+    # 已经 add 过的 marketplace 再 add 会以非零退出, 用 || true 让后续 install 命令仍能跑
+    cmds.append(f"claude plugins marketplace add {mkt} || true")
 
 for pid in selection.get("plugins", []) or []:
-    inst = find_install(plugins_yaml.get("plugins") or [], pid)
-    if not inst:
+    item = find_item(plugins_yaml.get("plugins") or [], pid)
+    if not item or not item.get("install"):
         print(f"echo 'WARN: plugin id {pid} not found in plugins.yaml, 跳过' >&2", file=sys.stdout)
         continue
-    cmds.append(f"claude plugins install {inst}")
+    queue_marketplace(item.get("marketplace"))
+    cmds.append(f"claude plugins install {item['install']}")
 
 for sid in selection.get("skills", []) or []:
-    inst = find_install(skills_yaml.get("skills") or [], sid)
-    if not inst:
+    item = find_item(skills_yaml.get("skills") or [], sid)
+    if not item or not item.get("install"):
         print(f"echo 'WARN: skill id {sid} not found in skills.yaml, 跳过' >&2", file=sys.stdout)
         continue
-    cmds.append(f"npx skills add {inst} -g -y")
+    cmds.append(f"npx skills add {item['install']} -g -y")
 
 for raw in selection.get("extra_plugins", []) or []:
     if raw.strip():
+        # extra_plugins 是用户自定义裸字符串, 没有 marketplace 元数据
+        # 用户需自行先 `claude plugins marketplace add <source>`, 否则装不上内置外的 plugin
         cmds.append(f"claude plugins install {raw.strip()}")
 
 for raw in selection.get("extra_skills", []) or []:

@@ -118,47 +118,87 @@ else
   ok "bun: $("$HOME/.bun/bin/bun" --version)"
 fi
 
-# 管理 bun PATH 在 .bashrc / .zshrc / .zshenv 三个 rc 文件:
-#   - 用我们自己的 marker 块, 幂等
-#   - 清掉 bun installer 留下的 "# bun" 旧块 (installer 不幂等, 跑两次会重复)
-#   - .zshenv 关键: claude-mem 的 SessionStart hook 用 zsh -lc 跑命令, 这种
-#     非交互登录 shell 不读 .zshrc, 只读 .zshenv / .zprofile。少了这步, hook
-#     启动后报 "Bun not found"
-log "管理 bun PATH 注入 (.bashrc / .zshrc / .zshenv)"
+# 管理 PATH / 加载行 注入到 rc 文件, 用 marker 块保证幂等:
+#
+#   bun-path     → .bashrc / .zshrc / .zshenv
+#                  .zshenv 关键: claude-mem 的 SessionStart hook 用 zsh -lc 跑命令,
+#                  这种非交互登录 shell 不读 .zshrc, 只读 .zshenv/.zprofile,
+#                  少了这步 hook 启动后报 "Bun not found"
+#
+#   nvm-load     → .bashrc / .zshrc
+#                  nvm installer 只改装时 $SHELL 指向的那一个 rc 文件 (在 bootstrap.sh
+#                  阶段 $SHELL=bash → 只动 .bashrc), 02b 把默认 shell 切 zsh 后,
+#                  .zshrc 没有 nvm 加载, 重新登录 node/npm/npx/claude 都找不到。
+#                  我们这里强制把加载行也写进 .zshrc。
+#
+#   localbin-path → .bashrc / .zshrc
+#                   ~/.local/bin 是 Claude Code CLI 落地路径; Ubuntu 的 ~/.profile
+#                   默认会把它加进 PATH, 但 zsh 不读 .profile, 所以 zsh 用户登录
+#                   后 claude 不在 PATH。强制写进 .zshrc。
+log "管理 PATH 注入 (.bashrc / .zshrc / .zshenv)"
 python3 - <<'PY'
 import os, re
 HOME = os.environ['HOME']
-MARKER = '# server-bootstrap:bun-path (managed by 03-node.sh, do not edit)'
-BLOCK = (
-    MARKER + '\n'
-    'export BUN_INSTALL="$HOME/.bun"\n'
-    'case ":$PATH:" in *":$BUN_INSTALL/bin:"*) ;; *) export PATH="$BUN_INSTALL/bin:$PATH" ;; esac\n'
-)
-# bun installer 的标准块: # bun \n export BUN_INSTALL=... \n export PATH=...BUN_INSTALL...
-INSTALLER_BLOCK_RE = re.compile(
-    r'\n*# bun\nexport BUN_INSTALL=[^\n]*\nexport PATH=[^\n]*BUN_INSTALL[^\n]*\n',
-    re.MULTILINE,
-)
+
+SPECS = [
+    {
+        'marker': '# server-bootstrap:bun-path (managed by 03-node.sh, do not edit)',
+        'block': (
+            'export BUN_INSTALL="$HOME/.bun"\n'
+            'case ":$PATH:" in *":$BUN_INSTALL/bin:"*) ;; *) export PATH="$BUN_INSTALL/bin:$PATH" ;; esac\n'
+        ),
+        'targets': ('.bashrc', '.zshrc', '.zshenv'),
+        # bun installer 自己的非幂等块, 清掉
+        'cleanup_re': re.compile(
+            r'\n*# bun\nexport BUN_INSTALL=[^\n]*\nexport PATH=[^\n]*BUN_INSTALL[^\n]*\n',
+            re.MULTILINE,
+        ),
+    },
+    {
+        'marker': '# server-bootstrap:nvm-load (managed by 03-node.sh, do not edit)',
+        'block': (
+            'export NVM_DIR="$HOME/.nvm"\n'
+            '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"\n'
+            '[ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"\n'
+        ),
+        'targets': ('.bashrc', '.zshrc'),
+        'cleanup_re': None,  # 不动 nvm installer 块, 重复 source 是 no-op
+    },
+    {
+        'marker': '# server-bootstrap:localbin-path (managed by 03-node.sh, do not edit)',
+        'block': (
+            'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac\n'
+        ),
+        'targets': ('.bashrc', '.zshrc'),
+        'cleanup_re': None,
+    },
+]
 
 def manage(path):
     if not os.path.exists(path):
         open(path, 'a').close()
     with open(path) as f:
         content = f.read()
-    new, removed = INSTALLER_BLOCK_RE.subn('', content)
+    original = content
     actions = []
-    if removed:
-        actions.append(f'清掉 {removed} 个 installer 旧块')
-    if MARKER not in new:
-        if new and not new.endswith('\n'):
-            new += '\n'
-        new += '\n' + BLOCK
-        actions.append('追加 marker 块')
+    for spec in SPECS:
+        if os.path.basename(path) not in spec['targets']:
+            continue
+        if spec['cleanup_re'] is not None:
+            content, removed = spec['cleanup_re'].subn('', content)
+            if removed:
+                actions.append(f"清 {removed} 个 installer 旧块")
+        if spec['marker'] not in content:
+            if content and not content.endswith('\n'):
+                content += '\n'
+            content += '\n' + spec['marker'] + '\n' + spec['block']
+            tag = spec['marker'].split(':', 1)[1].split(' ', 1)[0]
+            actions.append(f"加 {tag}")
     if not actions:
-        actions.append('已是目标状态')
-    if new != content:
+        actions.append('无变化')
+    if content != original:
         with open(path, 'w') as f:
-            f.write(new)
+            f.write(content)
     print(f'  ✅ {os.path.basename(path)}: ' + ' / '.join(actions))
 
 for rc in ('.bashrc', '.zshrc', '.zshenv'):

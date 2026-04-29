@@ -109,9 +109,21 @@ cat <<EOF
   Claude Code: $CLAUDE_VER
   SKILL:       $SKILL_LINK
 
-下一步 — 在当前 shell 执行下面这一行加载 PATH, 再起 claude:
+下一步: 自动加载 PATH 并启动 claude
+进会话后说: "执行 server-bootstrap, git_user_name=..., git_user_email=..."
+EOF
 
+# 自动 exec claude:
+#   - curl | bash 时, 当前进程的 stdin 是 pipe (已 EOF), claude TUI 没法读输入
+#     用 </dev/tty 把 stdin 重定向回控制终端
+#   - bash -l 启动登录 shell, 自动 source ~/.profile / ~/.bashrc, 加载 nvm 和 ~/.local/bin
+#   - 仅在 stdout 是 TTY 且 claude 已落地时执行 (CI / 重定向 / 安装失败时回退到指令)
+if [ -t 1 ] && [ -x "$HOME/.local/bin/claude" ] && [ -e /dev/tty ]; then
+  exec </dev/tty bash -lc 'claude'
+fi
+
+cat <<EOF
+
+(非交互模式或 claude 未就绪, 没自动起 — 请手动跑)
   source ~/.nvm/nvm.sh && export PATH="\$HOME/.local/bin:\$PATH" && claude
-
-进 claude 会话后说: "执行 server-bootstrap, git_user_name=..., git_user_email=..."
 EOF

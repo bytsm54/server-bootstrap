@@ -14,7 +14,7 @@ log()  { printf '\033[1;34m[02-base-deps]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m  ✅\033[0m %s\n' "$*"; }
 err()  { printf '\033[1;31m  ❌\033[0m %s\n' "$*" >&2; }
 
-PKGS=(curl ca-certificates git build-essential at)
+PKGS=(curl ca-certificates git build-essential at fonts-powerline)
 
 # 缺啥
 MISSING=()

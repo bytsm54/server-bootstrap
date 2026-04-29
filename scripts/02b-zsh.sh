@@ -58,7 +58,8 @@ else
 fi
 
 # --- 1. apt 包
-PKGS=(zsh zsh-syntax-highlighting zsh-autosuggestions fonts-powerline)
+# 注: fonts-powerline 已在 02-base-deps.sh 里装过, 这里不重复
+PKGS=(zsh zsh-syntax-highlighting zsh-autosuggestions)
 MISSING=()
 for p in "${PKGS[@]}"; do
   dpkg -s "$p" >/dev/null 2>&1 || MISSING+=("$p")

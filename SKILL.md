@@ -109,12 +109,14 @@ claude   # 登录
   默认: 跳过 (没默认仓库)
   要做: 给 git URL, 可选 project_dir 和 .env keys (如 TUSHARE_TOKEN,OPENAI_API_KEY)
 
-【07】装 Claude Code plugins / skills
+【07】装 Claude Code plugins / skills (装完自动软链给 codex 共享)
   ✅ 默认 plugins: superpowers, claude-mem, claude-hud
   ✅ 默认 skills:  skill-creator, skill-vetter, find-skills
   其他可选 plugins (web-access / pua)
   其他可选 skills (frontend-design / docx / pdf / xlsx / pptx / context7 / tushare-data 等)
   我可以读完整清单给你, 想加直接说 "07 加 xxx"
+  ↳ skill 装完后会逐项软链 ~/.agents/skills/* → ~/.codex/skills/*,
+    codex (phase 04a 装的) 共享同一份 skill, 不重复装。
 
 【08】SSH 加固
   ✅ 默认: port=22022, allow_users=<allow-user>, 禁密码, 禁 root, deadman=5min

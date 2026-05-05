@@ -95,16 +95,25 @@ run_phase "Phase 04 — Claude Code CLI" \
 run_phase "Phase 04a — Codex CLI (npm -g @openai/codex)" \
   bash "$REPO_DIR/scripts/lib/with-env.sh" -- bash "$REPO_DIR/scripts/04a-codex.sh"
 
+run_phase "Phase 04b — RTK + Claude/Codex 规则注入" \
+  bash "$REPO_DIR/scripts/04b-rtk.sh"
+
 # --- 4. 总结 & 下一步
 NODE_VER="(未加载 nvm)"
 CLAUDE_VER="(未加载)"
 CODEX_VER="(未装)"
+RTK_VER="(未装)"
 [ -s "$HOME/.nvm/nvm.sh" ] && (
   . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1
   command -v node >/dev/null 2>&1 && node --version
 ) >/tmp/.bootstrap-node-ver 2>/dev/null && NODE_VER=$(cat /tmp/.bootstrap-node-ver) && rm -f /tmp/.bootstrap-node-ver
 [ -x "$HOME/.local/bin/claude" ] && CLAUDE_VER=$("$HOME/.local/bin/claude" --version 2>/dev/null || echo "已装")
 CODEX_VER=$(bash "$REPO_DIR/scripts/lib/with-env.sh" -- codex --version 2>/dev/null | head -1 || echo "(未装)")
+# rtk 装完后可能在 ~/.local/bin / ~/.cargo/bin / ~/.rtk/bin, 总结时把候选目录都加进 PATH 再查
+for d in "$HOME/.local/bin" "$HOME/.cargo/bin" "$HOME/.rtk/bin"; do
+  case ":$PATH:" in *":$d:"*) ;; *) [ -d "$d" ] && export PATH="$d:$PATH" ;; esac
+done
+command -v rtk >/dev/null 2>&1 && RTK_VER=$(rtk --version 2>/dev/null | head -1 || echo "已装")
 
 printf '\n\033[1;32m✅ bootstrap.sh 完成\033[0m\n\n'
 
@@ -113,6 +122,7 @@ cat <<EOF
   Node:        $NODE_VER
   Claude Code: $CLAUDE_VER
   Codex:       $CODEX_VER
+  RTK:         $RTK_VER
   SKILL:       $SKILL_LINK
 
 下一步:

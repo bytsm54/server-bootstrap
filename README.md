@@ -2,7 +2,7 @@
 
 把一台**全新的 Ubuntu / Debian 服务器**变成「Claude Code 可用 + git 配好 + 项目可选就位」的可用环境。
 
-- ✅ Node / nvm / Claude Code 全部装到**用户态**（`$HOME` 下）, 不污染系统
+- ✅ Node / nvm / Claude Code / Codex / RTK 全部装到**用户态**（`$HOME` 下）, 不污染系统
 - ✅ 仅 apt 基础依赖一个步骤可能需要 sudo（且已装则跳过）
 - ✅ 每个 phase 都**幂等**, 可重跑、可单独跑
 - ✅ Plugin / skill 安装**默认关闭**, 由用户从清单中明确挑选
@@ -46,6 +46,8 @@ server-bootstrap/
 │   ├── 02b-zsh.sh               # 可选：zsh + oh-my-zsh + 主题 + 默认 shell
 │   ├── 03-node.sh               # nvm + Node LTS（用户态）
 │   ├── 04-claude-code.sh        # Claude Code CLI（用户态）
+│   ├── 04a-codex.sh             # Codex CLI（npm -g @openai/codex）
+│   ├── 04b-rtk.sh               # RTK + 注入 rtk 规则到 ~/.claude/CLAUDE.md 与 ~/.codex/AGENTS.md
 │   ├── 05-git-identity.sh       # git 全局身份
 │   ├── 06-project.sh            # 可选：clone + 装语言依赖 + 引导写 .env
 │   ├── 07-plugins-skills.sh     # 可选：按 yaml 选项装 plugin / skill

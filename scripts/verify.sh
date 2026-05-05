@@ -52,6 +52,27 @@ else
   miss "Codex:       未找到（应通过 npm install -g @openai/codex 装好）"
 fi
 
+# rtk 可能落地在 ~/.local/bin / ~/.cargo/bin / ~/.rtk/bin
+for d in "$HOME/.cargo/bin" "$HOME/.rtk/bin"; do
+  case ":$PATH:" in *":$d:"*) ;; *) [ -d "$d" ] && export PATH="$d:$PATH" ;; esac
+done
+if command -v rtk >/dev/null 2>&1; then
+  ok "RTK:         $(rtk --version 2>/dev/null | head -1 || echo 'version unknown')"
+  # 校验规则注入
+  if [ -f "$HOME/.claude/CLAUDE.md" ] && grep -qF 'server-bootstrap:rtk-rule' "$HOME/.claude/CLAUDE.md"; then
+    ok "RTK rule:    ~/.claude/CLAUDE.md 已注入"
+  else
+    warn "RTK rule:    ~/.claude/CLAUDE.md 未找到 rtk 规则段（重跑 04b-rtk.sh）"
+  fi
+  if [ -f "$HOME/.codex/AGENTS.md" ] && grep -qF 'server-bootstrap:rtk-rule' "$HOME/.codex/AGENTS.md"; then
+    ok "RTK rule:    ~/.codex/AGENTS.md 已注入"
+  else
+    warn "RTK rule:    ~/.codex/AGENTS.md 未找到 rtk 规则段（重跑 04b-rtk.sh）"
+  fi
+else
+  miss "RTK:         未找到（应由 04b-rtk.sh 装好）"
+fi
+
 # git identity
 GN="$(git config --global user.name  2>/dev/null || true)"
 GE="$(git config --global user.email 2>/dev/null || true)"

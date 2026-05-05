@@ -19,7 +19,7 @@ description: 在一台全新的 Ubuntu / Debian 服务器上完成"零到可用"
 curl -fsSL https://raw.githubusercontent.com/bytsm54/server-bootstrap/main/scripts/bootstrap.sh | bash
 ```
 
-`bootstrap.sh` 会装好 apt 基础依赖 + Node (via nvm) + Claude Code，然后打印下一步指引。完成后执行：
+`bootstrap.sh` 会装好 apt 基础依赖 + Node (via nvm) + Claude Code + Codex + RTK (并把 rtk 规则追加到 `~/.claude/CLAUDE.md` 和 `~/.codex/AGENTS.md`)，然后打印下一步指引。完成后执行：
 
 ```bash
 claude   # 登录
@@ -27,7 +27,7 @@ claude   # 登录
 
 进入 claude 会话, 说：「执行 server-bootstrap」, 即触发本 skill 走完后续 phase（git 身份 / 可选项目 / 可选 plugin-skill）。
 
-> 也支持「不用 SKILL, 只用 bootstrap.sh」最小路径——只装 Node + Claude Code, 其他都跳过。这是同一份脚本, 行为一致。
+> 也支持「不用 SKILL, 只用 bootstrap.sh」最小路径——只装 Node + Claude Code + Codex + RTK, 其他都跳过。这是同一份脚本, 行为一致。
 
 ---
 
@@ -161,6 +161,7 @@ claude   # 登录
 | 03 | nvm + Node + bun | `scripts/03-node.sh` | ❌ 用户态 | 必跑（bun 是 claude-mem 等 plugin hook 依赖, 同时装 .bashrc/.zshrc/.zshenv 三处 PATH 注入） |
 | 04 | Claude Code CLI | `scripts/04-claude-code.sh` | ❌ 用户态 | 必跑 |
 | 04a | Codex CLI | `scripts/04a-codex.sh` | ❌ 用户态 | 必跑（`npm install -g @openai/codex`, 由 `bootstrap.sh` 调用） |
+| 04b | RTK + 规则注入 | `scripts/04b-rtk.sh` | ❌ 用户态 | 必跑（curl 上游 install.sh 装 rtk, 然后追加 rtk 规则到 `~/.claude/CLAUDE.md` 与 `~/.codex/AGENTS.md`, 由 `bootstrap.sh` 调用） |
 | 05 | git 身份 | `scripts/05-git-identity.sh` | ❌ | 必跑 |
 | 06 | 项目克隆 + 依赖 | `scripts/06-project.sh` | ❌ | `project_repo_url` 提供时才跑 |
 | 07 | plugins / skills (Claude) | `scripts/07-plugins-skills.sh` | ❌ | `install_plugins_skills` 默认 true |

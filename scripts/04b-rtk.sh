@@ -59,6 +59,27 @@ else
   ok "位置: $(command -v rtk)"
 fi
 
+# --- 1.5 跑 rtk init (Claude + Codex)
+# rtk init -g 会问两次确认 (覆盖现有 hook / 写 settings 之类), 全部回 y
+# 重复跑 init 不会破坏现有配置 (rtk 会再确认一次, 用 yes y 兜底)
+log "rtk init -g (Claude 全局)"
+if yes y | rtk init -g >/dev/null 2>&1; then
+  ok "rtk init -g 完成"
+else
+  err "rtk init -g 失败"
+  err "排查: 在交互终端跑 'rtk init -g' 看具体报错"
+  exit 1
+fi
+
+log "rtk init -g --codex (Codex 全局)"
+if yes y | rtk init -g --codex >/dev/null 2>&1; then
+  ok "rtk init -g --codex 完成"
+else
+  err "rtk init -g --codex 失败"
+  err "排查: 在交互终端跑 'rtk init -g --codex' 看具体报错"
+  exit 1
+fi
+
 # --- 2. 注入规则到 Claude / Codex 全局指令文件 (幂等, 用 marker)
 
 append_rule() {

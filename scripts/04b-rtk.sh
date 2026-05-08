@@ -63,7 +63,7 @@ fi
 # rtk init -g 会问两次确认 (覆盖现有 hook / 写 settings 之类), 全部回 y
 # 重复跑 init 不会破坏现有配置 (rtk 会再确认一次, 用 yes y 兜底)
 log "rtk init -g (Claude 全局)"
-if yes y | rtk init -g >/dev/null 2>&1; then
+if rtk init -g < <(yes y) >/dev/null 2>&1; then
   ok "rtk init -g 完成"
 else
   err "rtk init -g 失败"
@@ -72,7 +72,7 @@ else
 fi
 
 log "rtk init -g --codex (Codex 全局)"
-if yes y | rtk init -g --codex >/dev/null 2>&1; then
+if rtk init -g --codex < <(yes y) >/dev/null 2>&1; then
   ok "rtk init -g --codex 完成"
 else
   err "rtk init -g --codex 失败"

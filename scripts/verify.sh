@@ -9,6 +9,10 @@ ok()   { printf '  ✅ %s\n' "$*"; }
 miss() { printf '  ❌ %s\n' "$*"; }
 warn() { printf '  ⚠️  %s\n' "$*"; }
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/toolchain.sh
+. "$SCRIPT_DIR/lib/toolchain.sh"
+
 echo "=========================="
 echo " server-bootstrap verify"
 echo "=========================="
@@ -22,24 +26,36 @@ ok "timezone:   $TZ_NOW ($(date '+%Y-%m-%d %H:%M:%S %z'))"
 # nvm + node
 export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" 2>/dev/null
+path_append_once "$HOME/.local/bin"
 
 if command -v node >/dev/null 2>&1; then
-  ok "Node:       $(node --version)"
+  ok "Node:       $(node --version) ($(command -v node))"
 else
   miss "Node:       未找到（试 source ~/.nvm/nvm.sh 或用 with-env.sh 包装）"
 fi
 
 if command -v npm >/dev/null 2>&1; then
-  ok "npm:        $(npm --version)  registry=$(npm config get registry)"
+  ok "npm:        $(npm --version) ($(command -v npm))  prefix=$(npm prefix -g) registry=$(npm config get registry)"
 else
   miss "npm:        未找到"
 fi
 
+# node/npm/npx must be owned by the same nvm bin, not by ~/.local/bin shims.
+if command -v node >/dev/null 2>&1; then
+  NVM_NODE_BIN="$(dirname "$(command -v node)")"
+  for tool in node npm npx; do
+    LOCAL_TOOL="$HOME/.local/bin/$tool"
+    if [ -e "$LOCAL_TOOL" ]; then
+      miss "Toolchain:  $LOCAL_TOOL shadows managed nvm $tool"
+    elif [ "$(command -v "$tool" 2>/dev/null || true)" = "$NVM_NODE_BIN/$tool" ]; then
+      ok "Toolchain:  $tool uses managed nvm path"
+    else
+      warn "Toolchain:  $tool path is $(command -v "$tool" 2>/dev/null || echo '?')"
+    fi
+  done
+fi
+
 # claude
-case ":$PATH:" in
-  *":$HOME/.local/bin:"*) ;;
-  *) export PATH="$HOME/.local/bin:$PATH" ;;
-esac
 if command -v claude >/dev/null 2>&1; then
   ok "Claude Code: $(claude --version 2>/dev/null || echo 'version unknown')"
 else
@@ -47,7 +63,16 @@ else
 fi
 
 if command -v codex >/dev/null 2>&1; then
-  ok "Codex:       $(codex --version 2>/dev/null | head -1 || echo 'version unknown')"
+  CODEX_LINE="$(codex --version 2>/dev/null | head -1 || echo 'version unknown')"
+  ok "Codex:       $CODEX_LINE ($(command -v codex))"
+  if command -v npm >/dev/null 2>&1; then
+    CODEX_TARGET="$(npm prefix -g)/bin/codex"
+    if [ -x "$CODEX_TARGET" ] && [ "$(toolchain_realpath "$(command -v codex)")" = "$(toolchain_realpath "$CODEX_TARGET")" ]; then
+      ok "Codex path:  matches npm prefix"
+    else
+      miss "Codex path:  active codex does not match npm prefix target $CODEX_TARGET"
+    fi
+  fi
 else
   miss "Codex:       未找到（应通过 npm install -g @openai/codex 装好）"
 fi

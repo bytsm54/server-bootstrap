@@ -1,14 +1,14 @@
 # server-bootstrap
 
-把一台**全新的 Ubuntu / Debian 服务器**变成「Claude Code 可用 + git 配好 + 项目可选就位」的可用环境。
+把一台**全新的 Ubuntu / Debian 服务器**变成「Claude Code / Codex 可用 + git 配好 + 项目可选就位」的可用环境。
 
-- ✅ Node / nvm / Claude Code / Codex / RTK 全部装到**用户态**（`$HOME` 下）, 不污染系统
-- ✅ 仅 apt 基础依赖一个步骤可能需要 sudo（且已装则跳过）
+- ✅ Node / nvm / Claude Code / Codex / RTK 全部装到**用户态**（`$HOME` 下）, 且由 bootstrap 统一 PATH: nvm 唯一接管 `node`/`npm`/`npx`, `codex` 绑定同一 npm prefix, 不污染系统
+- ✅ 核心开发工具装到用户态；需要 sudo 的只有 apt、hostname/timezone、zsh 默认 shell、SSH、fail2ban 等系统级 phase
 - ✅ 每个 phase 都**幂等**, 可重跑、可单独跑
-- ✅ Plugin / skill 安装**默认关闭**, 由用户从清单中明确挑选
+- ✅ Plugin / skill 安装在 `bootstrap.sh` 最小路径里不执行；进入 skill 后按推荐默认勾选, 由用户确认或调整
 - ✅ Token / 环境变量永远写到项目 `.env`, **不**塞进 `~/.zshrc`
-- ✅ zsh + oh-my-zsh **可选** phase（默认关闭, 设 `install_zsh=true` 才装）
-- ✅ SSH 加固 **可选** phase（默认关闭, 自带 deadman 自动回滚 + 双终端验证流程, 不会把你锁出去）
+- ✅ zsh + oh-my-zsh 是 skill 推荐默认 phase, 可用 `install_zsh=false` 关闭
+- ✅ SSH 加固是 skill 推荐默认 phase, 但必须逐项确认, 自带 deadman 自动回滚 + 双终端验证流程
 
 ---
 
@@ -37,7 +37,7 @@ claude     # 登录 Claude Code
 
 ```
 server-bootstrap/
-├── SKILL.md                     # Claude Code skill 入口（编排 + 参数 + 交互约定）
+├── SKILL.md                     # Agent skill 入口（编排 + 参数 + 交互约定）
 ├── scripts/
 │   ├── bootstrap.sh             # 一键入口（curl | bash 用）
 │   ├── 01-preflight.sh          # OS / 网络 / sudo 检测
@@ -51,13 +51,15 @@ server-bootstrap/
 │   ├── 05-git-identity.sh       # git 全局身份
 │   ├── 06-project.sh            # 可选：clone + 装语言依赖 + 引导写 .env
 │   ├── 07-plugins-skills.sh     # 可选：按 yaml 选项装 plugin / skill
+│   ├── 07a-codex-skills.sh      # 自动：把 ~/.agents/skills 软链给 Codex 复用
 │   ├── 08-ssh-harden.sh         # 可选：SSH 加固（apply/confirm/rollback 三模式 + deadman）
+│   ├── 09-fail2ban.sh           # 可选：fail2ban sshd jail
 │   ├── verify.sh                # 总检查 + 摘要
 │   └── lib/
 │       └── with-env.sh          # 包装：自动 source nvm + 加 PATH
 ├── templates/
-│   ├── plugins.yaml             # 推荐 plugin 清单（不会自动装）
-│   └── skills.yaml              # 推荐 skill 清单（不会自动装）
+│   ├── plugins.yaml             # 推荐 plugin 清单（进入 skill 后确认再装）
+│   └── skills.yaml              # 推荐 skill 清单（进入 skill 后确认再装）
 └── references/
     └── troubleshooting.md       # nvm / sudo / PATH / 重跑 排错
 ```
@@ -81,9 +83,9 @@ bash ~/server-bootstrap/scripts/lib/with-env.sh -- bash ~/server-bootstrap/scrip
 
 ## 设计原则
 
-1. **零 sudo 默认**：把"必须 sudo"压到只剩 apt 那一步, 且已装则跳过
+1. **用户态优先**：Node / Claude Code / Codex / RTK 放在 `$HOME` 下；系统级 phase 才申请 sudo
 2. **幂等**：每个脚本以"已是目标状态就退出 0"为前提, 让重跑安全
-3. **可选即关闭**：所有不属于"环境就绪"核心的能力（项目克隆、plugin、skill）默认关闭, 用户主动开启
+3. **先确认再执行**：不属于"环境就绪"核心的能力会在 skill 开场一次性展示, 用户确认、修改或跳过后才执行
 4. **不藏 secret**：所有写文件操作明确告诉用户写到哪里, 凡是 `*` 标记的敏感值都引导写到 gitignore 的 `.env`
 5. **进程级隔离**：除 git 全局身份以外, 不动 `~/.bashrc` / `~/.zshrc`（nvm 装好时会动一次, 是 nvm 自身行为）
 
@@ -93,7 +95,7 @@ bash ~/server-bootstrap/scripts/lib/with-env.sh -- bash ~/server-bootstrap/scrip
 
 | 项目 | 为什么 |
 |---|---|
-| fail2ban / WAF / 入侵检测 | 本 skill 的 SSH 加固只到配置层, 运行时防御另开 skill |
+| WAF / 入侵检测 / nftables 自定义规则 | phase 09 只覆盖 fail2ban sshd jail, 更复杂防御另开 skill |
 | nginx / 反代 / 域名 | 项目级问题, 不通用 |
 | Docker / k8s 安装 | 项目自决 |
 | 写 secret 到 `~/.zshrc` | 不安全, 引导写到 `<project>/.env` 即可 |

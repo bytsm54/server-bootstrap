@@ -44,12 +44,13 @@ case ":$PATH:" in
   *) export PATH="$HOME/.local/bin:$PATH" ;;
 esac
 
-# 已装则跳过
-if command -v claude >/dev/null 2>&1; then
+# 只信任 bootstrap 管理的位置; 其他 PATH 里的 claude 不能让本 phase 跳过。
+if [ -x "$HOME/.local/bin/claude" ] && [ "$(command -v claude 2>/dev/null || true)" = "$HOME/.local/bin/claude" ]; then
   ok "Claude Code 已装：$(claude --version 2>/dev/null || echo 'version unknown')"
   ok "位置: $(command -v claude)"
   exit 0
 fi
+[ -L "$HOME/.local/bin/claude" ] && rm -f "$HOME/.local/bin/claude"
 
 # --- 临时目录与清理
 TMP_DIR=""

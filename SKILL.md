@@ -1,13 +1,13 @@
 ---
 name: server-bootstrap
-description: 在一台全新的 Ubuntu / Debian 服务器上完成"零到可用"的初始化——安装 Node.js (via nvm, 用户态)、Claude Code CLI、配置 git 身份, 可选地克隆项目仓库并安装语言依赖, 可选地安装 Claude Code plugins / skills (从可编辑的清单中由用户挑选)。Use this skill whenever the user asks to bootstrap, initialize, provision, or set up a fresh / new Ubuntu / Debian server, VPS, droplet, or dev box, including phrasing like "装机"、"新机配置"、"上线一台新服务器"、"从零配 Claude Code 环境"、"配 Node + Claude Code"、"server bootstrap"、"VPS init"。Also trigger when the user explicitly invokes phase scripts under `scripts/`.
+description: 在一台全新的 Ubuntu / Debian 服务器上完成"零到可用"初始化：安装 Node.js (via nvm, 用户态)、Claude Code CLI、Codex CLI、RTK、配置 git 身份，并按确认结果执行项目克隆、plugins/skills、SSH 加固、fail2ban。Use this skill when the user asks to bootstrap, initialize, provision, or set up a fresh Ubuntu/Debian server, VPS, droplet, or dev box, including "装机"、"新机配置"、"上线一台新服务器"、"从零配 Claude Code 环境"、"配 Node + Claude Code"、"server bootstrap"、"VPS init"; also trigger when the user invokes phase scripts under `scripts/`.
 ---
 
 # server-bootstrap
 
 把一台全新的 Ubuntu / Debian 服务器变成「Claude Code 可用 + git 身份配好 + 项目可选就位」的可用环境。
 
-**所有 Node / nvm / Claude Code 都装到用户态（`$HOME` 下），全程仅 `02-base-deps` 一个 phase 可能需要 sudo（且已装则跳过）。**
+**Node / nvm / Claude Code / Codex / RTK 都装到用户态（`$HOME` 下）, 且由 bootstrap 统一 PATH: nvm 唯一接管 `node`/`npm`/`npx`, `codex` 绑定同一 npm prefix。需要 sudo 的只有系统级 phase：`02-base-deps`、`02a`、`02b`、`08`、`09`；用户跳过对应可选 phase 时不会执行那些 sudo 操作。**
 
 ---
 
@@ -158,9 +158,9 @@ claude   # 登录
 | 02 | apt 基础依赖 | `scripts/02-base-deps.sh` | ✅ | 必跑, 已装则整体跳过 |
 | 02a | hostname + timezone | `scripts/02a-system.sh` | ✅（hostnamectl/timedatectl） | `hostname` 或 `timezone` 提供时才跑 |
 | 02b | zsh + oh-my-zsh | `scripts/02b-zsh.sh` | ✅（apt + chsh） | `install_zsh=true` 才跑 |
-| 03 | nvm + Node + bun | `scripts/03-node.sh` | ❌ 用户态 | 必跑（bun 是 claude-mem 等 plugin hook 依赖, 同时装 .bashrc/.zshrc/.zshenv 三处 PATH 注入） |
+| 03 | nvm + Node + bun + 单一 Node/npm PATH | `scripts/03-node.sh` | ❌ 用户态 | 必跑（bun 是 claude-mem 等 plugin hook 依赖, 同时装 .bashrc/.zshrc/.zshenv 三处 PATH 注入） |
 | 04 | Claude Code CLI | `scripts/04-claude-code.sh` | ❌ 用户态 | 必跑 |
-| 04a | Codex CLI | `scripts/04a-codex.sh` | ❌ 用户态 | 必跑（`npm install -g @openai/codex`, 由 `bootstrap.sh` 调用） |
+| 04a | Codex CLI | `scripts/04a-codex.sh` | ❌ 用户态 | 必跑（`npm install -g @openai/codex`, 由 `bootstrap.sh` 调用; `~/.local/bin/codex` 指向同一 npm prefix, 避免升级和启动路径分裂） |
 | 04b | RTK + 规则注入 | `scripts/04b-rtk.sh` | ❌ 用户态 | 必跑（curl 上游 install.sh 装 rtk, 然后追加 rtk 规则到 `~/.claude/CLAUDE.md` 与 `~/.codex/AGENTS.md`, 由 `bootstrap.sh` 调用） |
 | 05 | git 身份 | `scripts/05-git-identity.sh` | ❌ | 必跑 |
 | 06 | 项目克隆 + 依赖 | `scripts/06-project.sh` | ❌ | `project_repo_url` 提供时才跑 |
@@ -175,6 +175,34 @@ claude   # 登录
 ---
 
 ## 执行约定
+
+### 0. 默认值落地（必须）
+
+在运行任何 phase 前, 先把未显式传入的参数归一化。后续执行代码只能读这些归一化后的变量, 不能再写互相矛盾的 `${var:-false}` fallback。
+
+```bash
+hostname="${hostname:-}"
+timezone="${timezone-Asia/Shanghai}"
+node_version="${node_version:-lts}"
+npm_registry="${npm_registry:-official}"
+claude_install_method="${claude_install_method:-auto}"
+claude_version="${claude_version:-}"
+install_zsh="${install_zsh:-true}"
+zsh_theme="${zsh_theme:-powerlevel10k/powerlevel10k}"
+project_repo_url="${project_repo_url:-}"
+project_dir="${project_dir:-}"
+project_env_keys="${project_env_keys:-}"
+install_plugins_skills="${install_plugins_skills:-true}"
+harden_ssh="${harden_ssh:-true}"
+ssh_port="${ssh_port:-22022}"
+if [ -z "${ssh_allow_users:-}" ]; then
+  ssh_allow_users="$(whoami)" || { echo "whoami 失败, 无法生成 ssh_allow_users 默认值" >&2; exit 1; }
+fi
+ssh_permit_root="${ssh_permit_root:-no}"
+ssh_password_auth="${ssh_password_auth:-no}"
+ssh_rollback_after_minutes="${ssh_rollback_after_minutes:-5}"
+enable_fail2ban="${enable_fail2ban:-true}"
+```
 
 ### 1. 命令包装（重要）
 
@@ -203,6 +231,19 @@ git -C "$REPO_DIR" pull --ff-only --quiet 2>/dev/null || true
 
 每个脚本退出码：`0` = 成功（含「已完成, 跳过」）, 非 0 = 失败。失败立即停止, 报错给用户, **不要试图绕过**。
 
+### 4. 失败处理矩阵
+
+| 触发条件 | 立即动作 | 兜底 |
+|---|---|---|
+| `~/server-bootstrap` 不存在或不是 git 仓库 | 停止, 让用户重跑 `bootstrap.sh` | 不在 skill 内偷偷 clone, 避免来源不一致 |
+| `git pull --ff-only` 失败 | 继续使用本地仓库, 明确报告 "pull 失败, 使用当前版本" | 不 reset、不 stash 用户改动 |
+| 必填 `git_user_name` / `git_user_email` 缺失 | 停止并一次性询问两个值 | 不跑 phase 05 的空值 |
+| `whoami` 失败 | 停止 phase 08 默认值生成 | 不用硬编码 `ubuntu` 代替 |
+| `templates/*.yaml` 不存在或解析不了 | phase 07 停止, 说明缺失文件路径 | 不安装任何 plugin/skill |
+| 任一 phase 脚本退出非 0 | 立即停止, 摘要说明失败 phase 和下一步排查文件 | 不跳过失败 phase 继续跑后续步骤 |
+| Phase 08 apply 成功但用户验证失败 | 调 `08-ssh-harden.sh rollback`, 再跑 `verify.sh` | 用户无回应时等 deadman 自动回滚 |
+| Phase 09 启动失败 | 停止, 提示 `systemctl status fail2ban` / `journalctl -u fail2ban -n 50` | 不修改 SSH 加固结果 |
+
 ---
 
 ## 执行流程
@@ -211,6 +252,12 @@ git -C "$REPO_DIR" pull --ff-only --quiet 2>/dev/null || true
 
 ```bash
 export REPO_DIR="${REPO_DIR:-$HOME/server-bootstrap}"
+
+if [ ! -d "$REPO_DIR/.git" ]; then
+  echo "server-bootstrap 仓库不存在: $REPO_DIR; 请先重跑 bootstrap.sh" >&2
+  exit 1
+fi
+git -C "$REPO_DIR" pull --ff-only --quiet 2>/dev/null || echo "pull 失败, 使用当前本地版本" >&2
 
 bash "$REPO_DIR/scripts/01-preflight.sh"
 bash "$REPO_DIR/scripts/02-base-deps.sh"
@@ -223,12 +270,12 @@ if [ -n "${hostname:-}" ] || [ -n "${timezone:-}" ]; then
 fi
 
 # 可选 phase 02b（必须在 03-node 之前跑, 让 .zshrc 创建顺序对）
-if [ "${install_zsh:-false}" = "true" ]; then
-  bash "$REPO_DIR/scripts/02b-zsh.sh" --theme "${zsh_theme:-powerlevel10k/powerlevel10k}"
+if [ "$install_zsh" = "true" ]; then
+  bash "$REPO_DIR/scripts/02b-zsh.sh" --theme "$zsh_theme"
 fi
 
-bash "$REPO_DIR/scripts/03-node.sh"        --node-version "${node_version:-lts}" --npm-registry "${npm_registry:-official}"
-bash "$REPO_DIR/scripts/04-claude-code.sh"  --method "${claude_install_method:-auto}" ${claude_version:+--version "$claude_version"}
+bash "$REPO_DIR/scripts/03-node.sh"        --node-version "$node_version" --npm-registry "$npm_registry"
+bash "$REPO_DIR/scripts/04-claude-code.sh"  --method "$claude_install_method" ${claude_version:+--version "$claude_version"}
 bash "$REPO_DIR/scripts/lib/with-env.sh" -- bash "$REPO_DIR/scripts/05-git-identity.sh" --name "$git_user_name" --email "$git_user_email"
 
 # 可选 phase 06
@@ -240,7 +287,7 @@ if [ -n "${project_repo_url:-}" ]; then
 fi
 
 # 可选 phase 07：必须 agent 主动询问用户挑选
-if [ "${install_plugins_skills:-false}" = "true" ]; then
+if [ "$install_plugins_skills" = "true" ]; then
   # 详见下文「Phase 07 交互」
   bash "$REPO_DIR/scripts/lib/with-env.sh" -- bash "$REPO_DIR/scripts/07-plugins-skills.sh" \
     --plugins-yaml "$REPO_DIR/templates/plugins.yaml" \
@@ -254,14 +301,16 @@ fi
 bash "$REPO_DIR/scripts/lib/with-env.sh" -- bash "$REPO_DIR/scripts/07a-codex-skills.sh"
 
 # 可选 phase 08：高风险, 必须按下方「Phase 08 强制对话流程」执行, 不要"一气呵成"
-if [ "${harden_ssh:-true}" = "true" ]; then
+if [ "$harden_ssh" = "true" ]; then
   : # 见下文「Phase 08 强制对话流程」
 fi
 
 # 可选 phase 09：fail2ban
 # 透传 ssh_port: 如果 phase 08 跑了, 用 08 用过的端口; 否则默认 22 (传统 sshd 端口)
-if [ "${enable_fail2ban:-true}" = "true" ]; then
-  bash "$REPO_DIR/scripts/09-fail2ban.sh" --ssh-port "${ssh_port:-22}"
+if [ "$enable_fail2ban" = "true" ]; then
+  fail2ban_ssh_port=22
+  [ "$harden_ssh" = "true" ] && fail2ban_ssh_port="$ssh_port"
+  bash "$REPO_DIR/scripts/09-fail2ban.sh" --ssh-port "$fail2ban_ssh_port"
 fi
 
 bash "$REPO_DIR/scripts/lib/with-env.sh" -- bash "$REPO_DIR/scripts/verify.sh"

@@ -18,6 +18,10 @@ log()  { printf '\033[1;34m[03-node]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m  ✅\033[0m %s\n' "$*"; }
 err()  { printf '\033[1;31m  ❌\033[0m %s\n' "$*" >&2; }
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/toolchain.sh
+. "$SCRIPT_DIR/lib/toolchain.sh"
+
 NODE_VERSION="lts"
 NPM_REGISTRY="official"
 NVM_INSTALLER_TAG="${NVM_INSTALLER_TAG:-v0.40.3}"
@@ -81,6 +85,10 @@ ok "Node: $(node --version)"
 ok "npm:  $(npm --version)"
 ok "npx:  $(npx --version)"
 
+NVM_NODE_BIN="$(dirname "$(command -v node)")"
+ensure_managed_node_toolchain "$NVM_NODE_BIN"
+ok "Node toolchain path: $NVM_NODE_BIN"
+
 # --- 3. npm 镜像
 case "$NPM_REGISTRY" in
   china)
@@ -132,9 +140,8 @@ fi
 #                  我们这里强制把加载行也写进 .zshrc。
 #
 #   localbin-path → .bashrc / .zshrc
-#                   ~/.local/bin 是 Claude Code CLI 落地路径; Ubuntu 的 ~/.profile
-#                   默认会把它加进 PATH, 但 zsh 不读 .profile, 所以 zsh 用户登录
-#                   后 claude 不在 PATH。强制写进 .zshrc。
+#                   ~/.local/bin 是 Claude Code / Codex / RTK 等 CLI 落地路径; 追加到
+#                   PATH 末尾, 避免云镜像预置的 ~/.local/bin/node/npm/npx 盖过 nvm。
 log "管理 PATH 注入 (.bashrc / .zshrc / .zshenv)"
 python3 - <<'PY'
 import os, re
@@ -167,7 +174,7 @@ SPECS = [
     {
         'marker': '# server-bootstrap:localbin-path (managed by 03-node.sh, do not edit)',
         'block': (
-            'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac\n'
+            'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$PATH:$HOME/.local/bin" ;; esac\n'
         ),
         'targets': ('.bashrc', '.zshrc'),
         'cleanup_re': None,
@@ -188,10 +195,21 @@ def manage(path):
             content, removed = spec['cleanup_re'].subn('', content)
             if removed:
                 actions.append(f"清 {removed} 个 installer 旧块")
-        if spec['marker'] not in content:
+        block = spec['marker'] + '\n' + spec['block']
+        old_block_re = re.compile(
+            r'\n*' + re.escape(spec['marker']) + r'\n'
+            r'.*?(?=\n# server-bootstrap:|\Z)',
+            re.DOTALL,
+        )
+        if spec['marker'] in content:
+            content, replaced = old_block_re.subn('\n' + block, content, count=1)
+            if replaced:
+                tag = spec['marker'].split(':', 1)[1].split(' ', 1)[0]
+                actions.append(f"更 {tag}")
+        else:
             if content and not content.endswith('\n'):
                 content += '\n'
-            content += '\n' + spec['marker'] + '\n' + spec['block']
+            content += '\n' + block
             tag = spec['marker'].split(':', 1)[1].split(' ', 1)[0]
             actions.append(f"加 {tag}")
     if not actions:

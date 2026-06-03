@@ -19,6 +19,14 @@ log()  { printf '\033[1;34m[04a-codex]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m  ✅\033[0m %s\n' "$*"; }
 err()  { printf '\033[1;31m  ❌\033[0m %s\n' "$*" >&2; }
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/toolchain.sh
+. "$SCRIPT_DIR/lib/toolchain.sh"
+
+if command -v node >/dev/null 2>&1; then
+  ensure_managed_node_toolchain "$(dirname "$(command -v node)")"
+fi
+
 if ! command -v npm >/dev/null 2>&1; then
   err "npm 不在 PATH"
   err "解决: 用 with-env.sh 包装 (bash lib/with-env.sh -- bash 04a-codex.sh)"
@@ -26,20 +34,33 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
-if command -v codex >/dev/null 2>&1; then
-  ok "codex 已装: $(codex --version 2>&1 | head -1)"
-  exit 0
-fi
+NPM_BIN="$(command -v npm)"
+NPM_PREFIX="$(npm prefix -g)"
+ok "npm: $NPM_BIN"
+ok "npm prefix: $NPM_PREFIX"
 
 log "npm install -g @openai/codex"
 npm install -g @openai/codex
 
+NPM_PREFIX="$(npm prefix -g)"
+ensure_codex_shim_for_prefix "$NPM_PREFIX"
+
 if ! command -v codex >/dev/null 2>&1; then
-  err "codex 装完仍找不到 — 检查 npm prefix: $(npm config get prefix 2>/dev/null || echo '?')"
+  err "codex 装完仍找不到 — npm prefix: $NPM_PREFIX"
+  exit 1
+fi
+
+CODEX_PATH="$(command -v codex)"
+CODEX_TARGET="$NPM_PREFIX/bin/codex"
+if [ "$(toolchain_realpath "$CODEX_PATH")" != "$(toolchain_realpath "$CODEX_TARGET")" ]; then
+  err "codex 路径不一致"
+  err "  active: $CODEX_PATH"
+  err "  target: $CODEX_TARGET"
   exit 1
 fi
 
 ok "codex: $(codex --version 2>&1 | head -1)"
+ok "位置: $CODEX_PATH -> $CODEX_TARGET"
 
 # 提前 mkdir ~/.codex/skills, 让 codex 一装完就有"插槽"
 # (phase 07a 装完 Claude skill 后会往这个目录里逐项软链, 但 phase 07a 可能被

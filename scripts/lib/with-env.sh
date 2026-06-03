@@ -15,18 +15,16 @@
 # 不用 -u: 一些 nvm 内部代码路径（如 PROVIDED_VERSION）在 set -u 下会挂掉。
 set -eo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=toolchain.sh
+. "$SCRIPT_DIR/toolchain.sh"
+
 # --- 加载 nvm（如果存在）
 export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 if [ -s "$NVM_DIR/nvm.sh" ]; then
   # shellcheck disable=SC1091
   . "$NVM_DIR/nvm.sh"
 fi
-
-# --- 把 ~/.local/bin 加进 PATH（Claude Code 默认装在那里）
-case ":$PATH:" in
-  *":$HOME/.local/bin:"*) ;;
-  *) export PATH="$HOME/.local/bin:$PATH" ;;
-esac
 
 # --- bun（claude-mem 等 plugin 依赖）
 if [ -d "$HOME/.bun/bin" ]; then
@@ -38,12 +36,18 @@ if [ -d "$HOME/.bun/bin" ]; then
 fi
 
 # --- 把 nvm 当前 node 路径暴露给子进程（npm/npx 相关）
-if command -v node >/dev/null 2>&1; then
+NODE_BIN=""
+if command -v nvm >/dev/null 2>&1; then
+  NODE_PATH_CURRENT="$(nvm which current 2>/dev/null || true)"
+  [ -x "$NODE_PATH_CURRENT" ] && NODE_BIN="$(dirname "$NODE_PATH_CURRENT")"
+fi
+if [ -z "$NODE_BIN" ] && command -v node >/dev/null 2>&1; then
   NODE_BIN="$(dirname "$(command -v node)")"
-  case ":$PATH:" in
-    *":$NODE_BIN:"*) ;;
-    *) export PATH="$NODE_BIN:$PATH" ;;
-  esac
+fi
+if [ -n "$NODE_BIN" ]; then
+  ensure_managed_node_toolchain "$NODE_BIN"
+else
+  path_append_once "$HOME/.local/bin"
 fi
 
 # --- 解析参数：支持 `with-env.sh -- cmd args` 也支持 `with-env.sh cmd args`

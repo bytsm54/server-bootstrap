@@ -4,6 +4,7 @@
 #   - curl
 #   - git
 #   - python3
+#   - util-linux（提供 flock，串行化 SSH 状态转换）
 #   - ca-certificates 包
 #   - build-essential 包（部分 npm 原生模块需要）
 #
@@ -15,7 +16,7 @@ log()  { printf '\033[1;34m[02-base-deps]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m  ✅\033[0m %s\n' "$*"; }
 err()  { printf '\033[1;31m  ❌\033[0m %s\n' "$*" >&2; }
 
-PKGS=(curl ca-certificates git build-essential at fonts-powerline python3)
+PKGS=(curl ca-certificates git build-essential at fonts-powerline python3 util-linux)
 
 # 缺啥
 MISSING=()

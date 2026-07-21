@@ -10,6 +10,7 @@ COMMAND_LOG="$TMP_DIR/commands.log"
 OUTPUT="$TMP_DIR/output.log"
 STATE_FILE="$TMP_DIR/deadman.state"
 SSHD_COUNT="$TMP_DIR/sshd.count"
+LOCK_FILE="$TMP_DIR/phase08.lock"
 mkdir -p "$FAKE_BIN"
 
 fail() {
@@ -53,10 +54,19 @@ reset_case() {
   : >"$COMMAND_LOG"
   : >"$OUTPUT"
   : >"$SSHD_COUNT"
-  rm -f "$STATE_FILE" "$STATE_FILE.tmp"
-  unset FAKE_AT_FAIL FAKE_ATRM_FAIL FAKE_SSHD_FAIL_ONCE FAKE_RESTORE_FAIL
+  rm -f "$STATE_FILE" "$STATE_FILE.tmp" "$LOCK_FILE"
+  unset FAKE_AT_FAIL FAKE_ATRM_FAIL FAKE_ATRM_SLEEP FAKE_SSHD_FAIL_ONCE FAKE_RESTORE_FAIL
   export FAKE_JOB_ID=101
   export FAKE_LATEST_BACKUP=/var/backups/sshd-bootstrap/sshd-latest.tar.gz
+}
+
+write_new_record() {
+  printf '%s\n%s\n%s\n%s\n' "$1" "$2" "${3:-2000000300}" "${4:-armed}" >"$STATE_FILE"
+}
+
+run_second_pass_case() {
+  [ "${SSH_SECOND_PASS_CASE:-all}" = all ] ||
+    [ "${SSH_SECOND_PASS_CASE:-}" = "$1" ]
 }
 
 run_ssh() {
@@ -67,14 +77,36 @@ run_ssh() {
     SSHD_COUNT="$SSHD_COUNT" \
     FAKE_AT_FAIL="${FAKE_AT_FAIL:-}" \
     FAKE_ATRM_FAIL="${FAKE_ATRM_FAIL:-}" \
+    FAKE_ATRM_SLEEP="${FAKE_ATRM_SLEEP:-}" \
     FAKE_SSHD_FAIL_ONCE="${FAKE_SSHD_FAIL_ONCE:-}" \
     FAKE_RESTORE_FAIL="${FAKE_RESTORE_FAIL:-}" \
     FAKE_JOB_ID="$FAKE_JOB_ID" \
     FAKE_LATEST_BACKUP="$FAKE_LATEST_BACKUP" \
+    SSH_HARDEN_LOCK_FILE="$LOCK_FILE" \
     PATH="$FAKE_BIN:/usr/bin:/bin" \
     bash "$ROOT_DIR/scripts/08-ssh-harden.sh" "$@" >"$OUTPUT" 2>&1
   STATUS=$?
   set -e
+}
+
+start_ssh_process() {
+  local process_output="$1"
+  shift
+  env \
+    COMMAND_LOG="$COMMAND_LOG" \
+    STATE_FILE="$STATE_FILE" \
+    SSHD_COUNT="$SSHD_COUNT" \
+    FAKE_AT_FAIL="${FAKE_AT_FAIL:-}" \
+    FAKE_ATRM_FAIL="${FAKE_ATRM_FAIL:-}" \
+    FAKE_ATRM_SLEEP="${FAKE_ATRM_SLEEP:-}" \
+    FAKE_SSHD_FAIL_ONCE="${FAKE_SSHD_FAIL_ONCE:-}" \
+    FAKE_RESTORE_FAIL="${FAKE_RESTORE_FAIL:-}" \
+    FAKE_JOB_ID="$FAKE_JOB_ID" \
+    FAKE_LATEST_BACKUP="$FAKE_LATEST_BACKUP" \
+    SSH_HARDEN_LOCK_FILE="$LOCK_FILE" \
+    PATH="$FAKE_BIN:/usr/bin:/bin" \
+    bash "$ROOT_DIR/scripts/08-ssh-harden.sh" "$@" >"$process_output" 2>&1 &
+  STARTED_PID=$!
 }
 
 run_apply() {
@@ -102,7 +134,10 @@ EOF
 
 cat >"$FAKE_BIN/date" <<'EOF'
 #!/usr/bin/env bash
-echo 20260722-000000
+case "${1:-}" in
+  +%s) echo 2000000000 ;;
+  *) echo 20260722-000000 ;;
+esac
 EOF
 
 cat >"$FAKE_BIN/sudo" <<'EOF'
@@ -114,6 +149,12 @@ command_name="${1:-}"
 shift || true
 
 case "$command_name" in
+  /usr/bin/env)
+    exec /usr/bin/env "$@"
+    ;;
+  flock)
+    exec /usr/bin/flock "$@"
+    ;;
   test)
     case "${1:-} ${2:-}" in
       "-s /var/run/sshd-bootstrap-deadman.atjob") test -s "$STATE_FILE" ;;
@@ -130,6 +171,11 @@ case "$command_name" in
     cat "$STATE_FILE"
     ;;
   atrm)
+    if [ -n "${FAKE_ATRM_SLEEP:-}" ]; then
+      printf 'atrm-start %s\n' "${1:-}" >>"$COMMAND_LOG"
+      sleep "$FAKE_ATRM_SLEEP"
+      printf 'atrm-end %s\n' "${1:-}" >>"$COMMAND_LOG"
+    fi
     [ "${FAKE_ATRM_FAIL:-}" != yes ]
     ;;
   at)
@@ -249,7 +295,7 @@ assert_log_excludes "systemctl reload"
 
 # An unresolved prior job blocks repeated apply before scheduling or mutation.
 reset_case
-printf '42\n/var/backups/sshd-bootstrap/sshd-old.tar.gz\n' >"$STATE_FILE"
+write_new_record 42 /var/backups/sshd-bootstrap/sshd-old.tar.gz
 export FAKE_ATRM_FAIL=yes
 run_apply
 [ "$STATUS" -ne 0 ] || fail "prior cancellation failure returned success"
@@ -275,25 +321,24 @@ assert_before "atrm 101" "mutation-tee /etc/ssh/sshd_config.d/00-server-bootstra
 
 # Confirm is successful only when cancellation is proven; uncertainty preserves state.
 reset_case
-printf '42\n/var/backups/sshd-bootstrap/sshd-confirm.tar.gz\n' >"$STATE_FILE"
+write_new_record 42 /var/backups/sshd-bootstrap/sshd-confirm.tar.gz
 export FAKE_ATRM_FAIL=yes
 run_ssh confirm
 [ "$STATUS" -ne 0 ] || fail "confirm swallowed cancellation failure"
 [ -s "$STATE_FILE" ] || fail "confirm removed state after cancellation failure"
 
-# Manual rollback restores the recorded backup before cancellation, and retains state on failure.
+# Manual rollback restores the recorded backup and retains state on cancellation failure.
 reset_case
-printf '42\n/var/backups/sshd-bootstrap/sshd-manual.tar.gz\n' >"$STATE_FILE"
+write_new_record 42 /var/backups/sshd-bootstrap/sshd-manual.tar.gz
 export FAKE_ATRM_FAIL=yes
 run_ssh rollback
 [ "$STATUS" -ne 0 ] || fail "manual rollback swallowed cancellation failure"
 assert_log_contains "tar xzf /var/backups/sshd-bootstrap/sshd-manual.tar.gz -C /"
-assert_before "tar xzf /var/backups/sshd-bootstrap/sshd-manual.tar.gz -C /" "atrm 42"
 [ -s "$STATE_FILE" ] || fail "manual rollback removed fallback state after cancellation failure"
 
 # Automatic rollback consumes its explicit matching backup and never cancels itself.
 reset_case
-printf '42\n/var/backups/sshd-bootstrap/sshd-auto.tar.gz\n' >"$STATE_FILE"
+write_new_record 42 /var/backups/sshd-bootstrap/sshd-auto.tar.gz
 run_ssh rollback --auto --backup-file /var/backups/sshd-bootstrap/sshd-auto.tar.gz
 assert_status 0
 assert_log_contains "tar xzf /var/backups/sshd-bootstrap/sshd-auto.tar.gz -C /"
@@ -302,7 +347,7 @@ assert_log_excludes "atrm 42"
 
 # A stale automatic command cannot restore once a newer backup owns the record.
 reset_case
-printf '202\n/var/backups/sshd-bootstrap/sshd-new.tar.gz\n' >"$STATE_FILE"
+write_new_record 202 /var/backups/sshd-bootstrap/sshd-new.tar.gz
 run_ssh rollback --auto --backup-file /var/backups/sshd-bootstrap/sshd-old.tar.gz
 assert_status 0
 assert_log_excludes "tar xzf /var/backups/sshd-bootstrap/sshd-old.tar.gz -C /"
@@ -327,5 +372,100 @@ run_apply
 [ "$STATUS" -ne 0 ] || fail "failed restore path returned success"
 [ -s "$STATE_FILE" ] || fail "failed restore discarded its remaining automatic fallback"
 assert_log_excludes "atrm 101"
+
+if run_second_pass_case legacy_auto_no_record; then
+  reset_case
+  run_ssh rollback --auto
+  assert_status 0
+  assert_log_excludes "tar xzf"
+  [ ! -e "$STATE_FILE" ] || fail "legacy auto without a record created state"
+fi
+
+if run_second_pass_case legacy_auto_one_line; then
+  reset_case
+  printf '42\n' >"$STATE_FILE"
+  run_ssh rollback --auto
+  assert_status 0
+  assert_log_contains "tar xzf $FAKE_LATEST_BACKUP -C /"
+  [ ! -e "$STATE_FILE" ] || fail "legacy one-line auto did not remove the consumed record"
+fi
+
+if run_second_pass_case legacy_auto_new_record; then
+  reset_case
+  write_new_record 42 /var/backups/sshd-bootstrap/sshd-new-format.tar.gz
+  run_ssh rollback --auto
+  assert_status 0
+  assert_log_excludes "tar xzf"
+  [ "$(sed -n '2p' "$STATE_FILE")" = /var/backups/sshd-bootstrap/sshd-new-format.tar.gz ] ||
+    fail "legacy auto changed a new-format record"
+fi
+
+if run_second_pass_case missing_confirm; then
+  reset_case
+  run_ssh confirm
+  [ "$STATUS" -ne 0 ] || fail "confirm without an armed record returned success"
+fi
+
+if run_second_pass_case auto_before_confirm; then
+  reset_case
+  write_new_record 42 /var/backups/sshd-bootstrap/sshd-auto-first.tar.gz
+  run_ssh rollback --auto --backup-file /var/backups/sshd-bootstrap/sshd-auto-first.tar.gz
+  assert_status 0
+  run_ssh confirm
+  [ "$STATUS" -ne 0 ] || fail "confirm succeeded after automatic rollback consumed the record"
+fi
+
+if run_second_pass_case manual_ownership; then
+  reset_case
+  write_new_record 42 /var/backups/sshd-bootstrap/sshd-manual-owner.tar.gz
+  export FAKE_ATRM_FAIL=yes
+  run_ssh rollback
+  [ "$STATUS" -ne 0 ] || fail "manual rollback lost the cancellation failure"
+  assert_before "atrm 42" "tar xzf /var/backups/sshd-bootstrap/sshd-manual-owner.tar.gz -C /"
+  [ "$(sed -n '4p' "$STATE_FILE")" = manual-restored ] ||
+    fail "manual rollback did not persist harmless post-restore ownership"
+  : >"$COMMAND_LOG"
+  unset FAKE_ATRM_FAIL
+  run_ssh rollback --auto --backup-file /var/backups/sshd-bootstrap/sshd-manual-owner.tar.gz
+  assert_status 0
+  assert_log_excludes "tar xzf"
+fi
+
+if run_second_pass_case absolute_deadline; then
+  reset_case
+  run_apply
+  assert_status 0
+  [ "$(sed -n '3p' "$STATE_FILE")" = 2000000300 ] ||
+    fail "armed record does not persist the absolute automatic deadline"
+  [ "$(sed -n '4p' "$STATE_FILE")" = armed ] ||
+    fail "armed record does not persist its ownership state"
+fi
+
+if run_second_pass_case serialized_ownership; then
+  reset_case
+  write_new_record 42 /var/backups/sshd-bootstrap/sshd-serialized.tar.gz
+  export FAKE_ATRM_SLEEP=0.5
+  FIRST_OUTPUT="$TMP_DIR/first-transition.out"
+  SECOND_OUTPUT="$TMP_DIR/second-transition.out"
+  start_ssh_process "$FIRST_OUTPUT" confirm
+  FIRST_PID=$STARTED_PID
+  for _ in $(seq 1 100); do
+    grep -Fq 'atrm-start 42' "$COMMAND_LOG" && break
+    sleep 0.01
+  done
+  grep -Fq 'atrm-start 42' "$COMMAND_LOG" || fail "first transition never reached cancellation"
+  start_ssh_process "$SECOND_OUTPUT" confirm
+  SECOND_PID=$STARTED_PID
+  sleep 0.1
+  [ ! -s "$SECOND_OUTPUT" ] || fail "second phase-08 transition entered while the first owned state"
+  set +e
+  wait "$FIRST_PID"
+  FIRST_STATUS=$?
+  wait "$SECOND_PID"
+  SECOND_STATUS=$?
+  set -e
+  [ "$FIRST_STATUS" -eq 0 ] || fail "first serialized transition failed"
+  [ "$SECOND_STATUS" -ne 0 ] || fail "second confirm did not observe the first transition's consumed state"
+fi
 
 echo "ssh deadman lifecycle tests passed"

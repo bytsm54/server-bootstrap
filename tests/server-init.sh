@@ -52,6 +52,9 @@ run_server_init() {
     REPO_DIR="$FAKE_REPO" \
     CALL_LOG="$CALL_LOG" \
     FAIL_PHASE="${FAIL_PHASE:-}" \
+    FAIL_SSH_MODE="${FAIL_SSH_MODE:-}" \
+    FAKE_NOW_EPOCH="${FAKE_NOW_EPOCH:-1000}" \
+    FAKE_DEADLINE_EPOCH="${FAKE_DEADLINE_EPOCH:-1300}" \
     WHOAMI_RESULT="${WHOAMI_RESULT-tester}" \
     SERVER_INIT_INTERACTIVE="${INTERACTIVE:-yes}" \
     PATH="$FAKE_BIN:/usr/bin:/bin" \
@@ -71,7 +74,15 @@ cat >"$FAKE_BIN/whoami" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$WHOAMI_RESULT"
 EOF
-chmod +x "$FAKE_BIN/whoami"
+cat >"$FAKE_BIN/date" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = +%s ]; then
+  echo "$FAKE_NOW_EPOCH"
+else
+  /bin/date "$@"
+fi
+EOF
+chmod +x "$FAKE_BIN/whoami" "$FAKE_BIN/date"
 
 for phase in \
   01-preflight.sh \
@@ -101,6 +112,10 @@ name="$(basename "$0")"
   printf '\n'
 } >>"$CALL_LOG"
 [ "${FAIL_PHASE:-}" != "$name" ] || exit 17
+if [ "$name" = 08-ssh-harden.sh ]; then
+  [ "${FAIL_SSH_MODE:-}" != "${1:-}" ] || exit 18
+  [ "${1:-}" != deadline ] || echo "$FAKE_DEADLINE_EPOCH"
+fi
 EOF
   chmod +x "$FAKE_REPO/scripts/$phase"
 done
@@ -287,6 +302,7 @@ assert_log_equals "$(cat <<'EOF'
 03-node.sh --node-version lts --npm-registry official --install-bun no
 05-git-identity.sh --name Test User --email test@example.com
 08-ssh-harden.sh apply --port 22022 --allow-users tester --permit-root no --password-auth no --rollback-after-minutes 5
+08-ssh-harden.sh deadline
 08-ssh-harden.sh confirm
 09-fail2ban.sh --ssh-port 22022
 verify-server.sh
@@ -364,6 +380,8 @@ assert_log_contains '09-fail2ban.sh --ssh-port 22'
 assert_log_excludes
 
 # EOF at the second-terminal prompt follows the timeout/unknown rollback route.
+FAKE_NOW_EPOCH=1000
+FAKE_DEADLINE_EPOCH=1060
 write_input 'yes' '已准备'
 run_server_init \
   --hostname '' --timezone Asia/Shanghai \
@@ -379,6 +397,7 @@ assert_log_contains '09-fail2ban.sh --ssh-port 22'
 grep -Fq '本地确认等待: 30 秒（比 deadman 提前 30 秒）' "$OUTPUT" ||
   fail "manual rollback deadline is not observably earlier than the one-minute deadman"
 assert_log_excludes
+unset FAKE_NOW_EPOCH FAKE_DEADLINE_EPOCH
 
 # An SSH apply failure stops before confirm, rollback, fail2ban, and verification.
 FAIL_PHASE=08-ssh-harden.sh
@@ -397,6 +416,24 @@ assert_log_contains '08-ssh-harden.sh apply --port 22022 --allow-users tester --
 ! grep -Fq 'verify-server.sh' "$CALL_LOG" || fail "SSH apply failure invoked verifier"
 assert_log_excludes
 unset FAIL_PHASE
+
+# A confirm failure (including auto-before-confirm missing state) stops before fail2ban.
+FAIL_SSH_MODE=confirm
+write_input 'yes' '已准备' '成功'
+run_server_init \
+  --hostname '' --timezone Asia/Shanghai --install-zsh no \
+  --node-version lts --npm-registry official --install-bun no \
+  --git-name 'Test User' --git-email test@example.com \
+  --harden-ssh yes --ssh-port 22022 --ssh-allow-users tester \
+  --ssh-permit-root no --ssh-password-auth no --ssh-rollback-minutes 5 \
+  --enable-fail2ban yes
+[ "$STATUS" -ne 0 ] || fail "SSH confirm failure returned success"
+assert_log_contains '08-ssh-harden.sh deadline'
+assert_log_contains '08-ssh-harden.sh confirm'
+! grep -Fq '09-fail2ban.sh' "$CALL_LOG" || fail "SSH confirm failure invoked fail2ban"
+! grep -Fq 'verify-server.sh' "$CALL_LOG" || fail "SSH confirm failure invoked verifier"
+assert_log_excludes
+unset FAIL_SSH_MODE
 
 # Any ordinary phase failure stops all later phases.
 FAIL_PHASE=03-node.sh

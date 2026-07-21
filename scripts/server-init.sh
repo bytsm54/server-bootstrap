@@ -5,6 +5,7 @@ set -euo pipefail
 
 log() { printf '\033[1;34m[server-init]\033[0m %s\n' "$*"; }
 ok()  { printf '\033[1;32m  ✅\033[0m %s\n' "$*"; }
+warn(){ printf '\033[1;33m  ⚠️\033[0m %s\n' "$*"; }
 err() { printf '\033[1;31m  ❌\033[0m %s\n' "$*" >&2; }
 
 usage() {
@@ -459,18 +460,44 @@ EOF
       --password-auth "$SSH_PASSWORD_AUTH" \
       --rollback-after-minutes "$SSH_ROLLBACK_MINUTES"
 
-    printf '请从第二个终端测试新端口；成功后输入“成功”，否则将立即回滚: '
-    SSH_RESULT=""
     SSH_DEADMAN_MARGIN_SECONDS=30
-    SSH_TIMEOUT_SECONDS=$((10#$SSH_ROLLBACK_MINUTES * 60 - SSH_DEADMAN_MARGIN_SECONDS))
-    printf '\n本地确认等待: %s 秒（比 deadman 提前 %s 秒）\n' \
-      "$SSH_TIMEOUT_SECONDS" "$SSH_DEADMAN_MARGIN_SECONDS"
-    if read -r -t "$SSH_TIMEOUT_SECONDS" SSH_RESULT && [ "$SSH_RESULT" = "成功" ]; then
-      run_phase "确认 SSH 加固" bash "$SCRIPTS_DIR/08-ssh-harden.sh" confirm
-      FAIL2BAN_SSH_PORT="$SSH_PORT"
+    SSH_DEADLINE_READY=1
+    log "读取 SSH 自动回滚 absolute deadline"
+    if ! SSH_AUTO_DEADLINE="$(bash "$SCRIPTS_DIR/08-ssh-harden.sh" deadline)"; then
+      err "无法读取 SSH 自动回滚截止时间；停止初始化以避免无归属回滚"
+      exit 1
+    elif ! [[ "$SSH_AUTO_DEADLINE" =~ ^[0-9]+$ ]]; then
+      err "SSH 自动回滚截止时间格式无效；停止初始化以避免无归属回滚"
+      exit 1
     else
+      SSH_NOW_EPOCH="$(date +%s 2>/dev/null || true)"
+      if ! [[ "$SSH_NOW_EPOCH" =~ ^[0-9]+$ ]]; then
+        err "无法读取当前时间；停止初始化以避免无归属回滚"
+        exit 1
+      else
+        SSH_TIMEOUT_SECONDS=$((SSH_AUTO_DEADLINE - SSH_NOW_EPOCH - SSH_DEADMAN_MARGIN_SECONDS))
+        if [ "$SSH_TIMEOUT_SECONDS" -le 0 ]; then
+          warn "SSH 自动回滚截止时间已不足安全余量；立即回滚"
+          SSH_DEADLINE_READY=0
+        fi
+      fi
+    fi
+
+    if [ "$SSH_DEADLINE_READY" -eq 0 ]; then
       run_phase "回滚 SSH 加固" bash "$SCRIPTS_DIR/08-ssh-harden.sh" rollback
       FAIL2BAN_SSH_PORT=22
+    else
+      printf '请从第二个终端测试新端口；成功后输入“成功”，否则将立即回滚: '
+      SSH_RESULT=""
+      printf '\n本地确认等待: %s 秒（比 deadman 提前 %s 秒）\n' \
+        "$SSH_TIMEOUT_SECONDS" "$SSH_DEADMAN_MARGIN_SECONDS"
+      if read -r -t "$SSH_TIMEOUT_SECONDS" SSH_RESULT && [ "$SSH_RESULT" = "成功" ]; then
+        run_phase "确认 SSH 加固" bash "$SCRIPTS_DIR/08-ssh-harden.sh" confirm
+        FAIL2BAN_SSH_PORT="$SSH_PORT"
+      else
+        run_phase "回滚 SSH 加固" bash "$SCRIPTS_DIR/08-ssh-harden.sh" rollback
+        FAIL2BAN_SSH_PORT=22
+      fi
     fi
   else
     ok "已跳过 SSH 加固"

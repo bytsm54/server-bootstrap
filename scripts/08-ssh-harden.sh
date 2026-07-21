@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 08-ssh-harden.sh — SSH 加固（高风险）
 #
-# 三种模式（必须明确传一个）：
+# 四种模式（必须明确传一个）：
 #
 #   apply    --port <N> --allow-users <u1[,u2,...]>
 #            [--permit-root no|yes]                    (默认 no)
@@ -17,6 +17,9 @@
 #     立即回滚到当前 deadman 记录对应的备份（旧记录回退到最近备份）
 #     --auto: 由 deadman 触发, 仅用于日志区分
 #
+#   deadline
+#     输出当前 armed deadman 的 absolute deadline（epoch 秒）
+#
 # 安全约束（脚本内强制）：
 #   - 修改 sshd_config 前 tar 备份整个 /etc/ssh
 #   - 禁用 password 前必须确认 allow_users 都有 authorized_keys
@@ -31,6 +34,8 @@
 
 set -euo pipefail
 
+ORIGINAL_ARGS=("$@")
+
 log()  { printf '\033[1;34m[08-ssh-harden]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m  ✅\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m  ⚠️\033[0m %s\n' "$*"; }
@@ -41,6 +46,7 @@ SSHD_DROPIN_DIR=/etc/ssh/sshd_config.d
 DROPIN_NAME=00-server-bootstrap.conf
 BACKUP_DIR=/var/backups/sshd-bootstrap
 DEADMAN_FILE=/var/run/sshd-bootstrap-deadman.atjob
+LOCK_FILE="${SSH_HARDEN_LOCK_FILE:-/var/run/sshd-bootstrap.lock}"
 
 # Ubuntu 22.04+ / Debian 12+ 用 systemd socket activation 持有 listening fd,
 # sshd_config 的 Port 指令会被旁路。此函数返回当前 active 的 socket 单元名。
@@ -70,6 +76,24 @@ else
   SUDO=()
 fi
 
+# Elevate once so the process can open the host-local lock file. The marker may
+# skip only the elevation re-exec; every process still acquires the lock itself.
+if [ "$(id -u)" -ne 0 ] && [ "${SSH_HARDEN_ELEVATED:-0}" != 1 ]; then
+  exec "${SUDO[@]}" /usr/bin/env \
+    SSH_HARDEN_ELEVATED=1 \
+    SSH_HARDEN_LOCK_FILE="$LOCK_FILE" \
+    bash "$0" "${ORIGINAL_ARGS[@]}"
+fi
+if ! command -v flock >/dev/null 2>&1; then
+  err "需要 flock(1) 串行化 SSH 状态转换, 但未安装（请先跑 02-base-deps.sh）"
+  exit 1
+fi
+if ! exec 9>"$LOCK_FILE"; then
+  err "无法打开 SSH 状态锁 $LOCK_FILE"
+  exit 1
+fi
+flock -x 9
+
 deadman_record_exists() {
   "${SUDO[@]}" test -s "$DEADMAN_FILE"
 }
@@ -80,6 +104,18 @@ read_deadman_job_id() {
 
 read_deadman_backup_file() {
   "${SUDO[@]}" cat "$DEADMAN_FILE" 2>/dev/null | sed -n '2p'
+}
+
+read_deadman_deadline() {
+  "${SUDO[@]}" cat "$DEADMAN_FILE" 2>/dev/null | sed -n '3p'
+}
+
+read_deadman_state() {
+  "${SUDO[@]}" cat "$DEADMAN_FILE" 2>/dev/null | sed -n '4p'
+}
+
+record_state_is_armed() {
+  [ "$1" = armed ] || [ -z "$1" ]
 }
 
 cancel_deadman_job() {
@@ -93,9 +129,11 @@ cancel_deadman_job() {
 write_deadman_record() {
   local job_id="$1"
   local backup_file="$2"
+  local deadline="$3"
+  local state="$4"
   local temp_file="${DEADMAN_FILE}.tmp.$$"
 
-  if ! printf '%s\n%s\n' "$job_id" "$backup_file" |
+  if ! printf '%s\n%s\n%s\n%s\n' "$job_id" "$backup_file" "$deadline" "$state" |
        "${SUDO[@]}" tee "$temp_file" >/dev/null; then
     "${SUDO[@]}" rm -f "$temp_file" 2>/dev/null || true
     return 1
@@ -170,7 +208,7 @@ SOCKET_UNIT="$(detect_socket_unit || true)"
 # --- 解析模式
 MODE="${1:-}"; shift || true
 case "$MODE" in
-  apply|confirm|rollback) ;;
+  apply|confirm|rollback|deadline) ;;
   -h|--help|"")
     sed -n '2,40p' "$0"
     exit 0 ;;
@@ -178,14 +216,41 @@ case "$MODE" in
 esac
 
 # ---------------------------------------------------------------------------
+# DEADLINE (server-init reads the already-running automatic clock)
+# ---------------------------------------------------------------------------
+if [ "$MODE" = deadline ]; then
+  if ! deadman_record_exists; then
+    err "没有 armed deadman 记录"
+    exit 1
+  fi
+  RECORDED_BACKUP="$(read_deadman_backup_file)"
+  RECORDED_DEADLINE="$(read_deadman_deadline)"
+  RECORDED_STATE="$(read_deadman_state)"
+  if [ -z "$RECORDED_BACKUP" ] ||
+     ! [[ "$RECORDED_DEADLINE" =~ ^[0-9]+$ ]] ||
+     ! record_state_is_armed "$RECORDED_STATE"; then
+    err "deadman 记录没有可用的 absolute deadline"
+    exit 1
+  fi
+  printf '%s\n' "$RECORDED_DEADLINE"
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
 # CONFIRM
 # ---------------------------------------------------------------------------
 if [ "$MODE" = "confirm" ]; then
   if [ ! -s "$DEADMAN_FILE" ] && ! "${SUDO[@]}" test -s "$DEADMAN_FILE"; then
-    warn "没有找到 deadman 任务记录（可能已经 confirm 过了, 或 apply 没成功）"
-    exit 0
+    err "没有找到 armed deadman 记录；无法确认 SSH 仍在新配置"
+    exit 1
   fi
   JOB_ID="$("${SUDO[@]}" cat "$DEADMAN_FILE" 2>/dev/null | head -1)"
+  CONFIRM_BACKUP="$(read_deadman_backup_file)"
+  CONFIRM_STATE="$(read_deadman_state)"
+  if [ -n "$CONFIRM_BACKUP" ] && ! record_state_is_armed "$CONFIRM_STATE"; then
+    err "deadman 记录已不再由 apply 持有；拒绝确认"
+    exit 1
+  fi
   if [ -n "$JOB_ID" ]; then
     log "取消 at 任务 $JOB_ID"
     cancel_deadman_job "$JOB_ID" || exit 1
@@ -213,17 +278,44 @@ if [ "$MODE" = "rollback" ]; then
     esac
   done
 
+  RECORD_EXISTS=0
   RECORDED_JOB=""
   RECORDED_BACKUP=""
+  RECORDED_DEADLINE=""
+  RECORDED_STATE=""
   if deadman_record_exists; then
+    RECORD_EXISTS=1
     RECORDED_JOB="$(read_deadman_job_id)"
     RECORDED_BACKUP="$(read_deadman_backup_file)"
+    RECORDED_DEADLINE="$(read_deadman_deadline)"
+    RECORDED_STATE="$(read_deadman_state)"
   fi
 
-  if [ "$AUTO" -eq 1 ] && [ -n "$REQUESTED_BACKUP" ] &&
-     [ "$RECORDED_BACKUP" != "$REQUESTED_BACKUP" ]; then
-    warn "忽略 stale deadman：matching backup 已不再拥有当前记录"
-    exit 0
+  if [ "$AUTO" -eq 1 ]; then
+    if [ -z "$REQUESTED_BACKUP" ]; then
+      if [ "$RECORD_EXISTS" -eq 0 ]; then
+        warn "忽略 legacy deadman：当前没有记录"
+        exit 0
+      fi
+      if [ -n "$RECORDED_BACKUP" ]; then
+        warn "忽略 legacy deadman：当前记录属于 new-format job"
+        exit 0
+      fi
+    else
+      if [ "$RECORD_EXISTS" -eq 0 ] || [ "$RECORDED_BACKUP" != "$REQUESTED_BACKUP" ]; then
+        warn "忽略 stale deadman：matching backup 已不再拥有当前记录"
+        exit 0
+      fi
+      if [ "$RECORDED_STATE" = manual-restored ]; then
+        warn "手动回滚已完成；自动任务不再重复 restore"
+        "${SUDO[@]}" rm -f "$DEADMAN_FILE"
+        exit 0
+      fi
+      if ! record_state_is_armed "$RECORDED_STATE"; then
+        warn "忽略 deadman：记录状态不是 armed"
+        exit 0
+      fi
+    fi
   fi
 
   ROLLBACK_BACKUP="$REQUESTED_BACKUP"
@@ -240,13 +332,27 @@ if [ "$MODE" = "rollback" ]; then
     log "手动回滚到 $ROLLBACK_BACKUP"
   fi
 
+  CANCEL_FAILED=0
+  if [ "$AUTO" -eq 0 ] && [ -n "$RECORDED_JOB" ]; then
+    log "回滚前取消 at 任务 $RECORDED_JOB"
+    if ! cancel_deadman_job "$RECORDED_JOB"; then
+      CANCEL_FAILED=1
+    fi
+  fi
+
   restore_ssh_backup "$ROLLBACK_BACKUP" || exit 1
 
-  if [ "$AUTO" -eq 0 ] && [ -n "$RECORDED_JOB" ]; then
-    cancel_deadman_job "$RECORDED_JOB" || exit 1
+  if [ "$AUTO" -eq 1 ]; then
     "${SUDO[@]}" rm -f "$DEADMAN_FILE"
-  elif [ "$AUTO" -eq 1 ] && [ -n "$RECORDED_BACKUP" ] &&
-       [ "$RECORDED_BACKUP" = "$ROLLBACK_BACKUP" ]; then
+  elif [ "$CANCEL_FAILED" -eq 1 ]; then
+    [ -n "$RECORDED_DEADLINE" ] || RECORDED_DEADLINE=0
+    if ! write_deadman_record \
+      "$RECORDED_JOB" "$ROLLBACK_BACKUP" "$RECORDED_DEADLINE" manual-restored; then
+      err "手动回滚已完成，但无法写入 harmless ownership 状态"
+    fi
+    err "SSH 已恢复，但 at 任务取消未确认"
+    exit 1
+  elif [ "$RECORD_EXISTS" -eq 1 ]; then
     "${SUDO[@]}" rm -f "$DEADMAN_FILE"
   fi
 
@@ -340,13 +446,20 @@ fi
 # Never overwrite that ownership with a new job while the old job may still execute.
 if deadman_record_exists; then
   PRIOR_JOB_ID="$(read_deadman_job_id)"
+  PRIOR_BACKUP="$(read_deadman_backup_file)"
+  PRIOR_STATE="$(read_deadman_state)"
   if [ -z "$PRIOR_JOB_ID" ]; then
     err "已有 deadman 记录但缺少 job ID；拒绝覆盖"
     exit 1
   fi
-  log "取消上一次未确认的 at 任务 $PRIOR_JOB_ID"
-  cancel_deadman_job "$PRIOR_JOB_ID" || exit 1
-  "${SUDO[@]}" rm -f "$DEADMAN_FILE"
+  if [ -n "$PRIOR_BACKUP" ] && [ "$PRIOR_STATE" = manual-restored ]; then
+    log "清理已完成手动回滚的 harmless ownership 记录"
+    "${SUDO[@]}" rm -f "$DEADMAN_FILE"
+  else
+    log "取消上一次未确认的 at 任务 $PRIOR_JOB_ID"
+    cancel_deadman_job "$PRIOR_JOB_ID" || exit 1
+    "${SUDO[@]}" rm -f "$DEADMAN_FILE"
+  fi
 fi
 
 # --- 备份
@@ -365,6 +478,12 @@ ok "备份完成"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEADMAN_ARMED=0
 if [ "$USE_DEADMAN" -eq 1 ]; then
+  ARMED_AT_EPOCH="$(date +%s)"
+  if ! [[ "$ARMED_AT_EPOCH" =~ ^[0-9]+$ ]]; then
+    err "无法读取当前 epoch 时间；SSH 尚未修改"
+    exit 1
+  fi
+  AUTO_DEADLINE=$((ARMED_AT_EPOCH + 10#$ROLLBACK_MIN * 60))
   printf -v ROLLBACK_SCRIPT_Q '%q' "$REPO_ROOT/scripts/08-ssh-harden.sh"
   printf -v BACKUP_FILE_Q '%q' "$BACKUP_FILE"
   ROLLBACK_CMD="bash $ROLLBACK_SCRIPT_Q rollback --auto --backup-file $BACKUP_FILE_Q"
@@ -378,7 +497,7 @@ if [ "$USE_DEADMAN" -eq 1 ]; then
     err "at 调度结果无法解析 job ID：$AT_OUT"
     exit 1
   fi
-  if ! write_deadman_record "$JOB_ID" "$BACKUP_FILE"; then
+  if ! write_deadman_record "$JOB_ID" "$BACKUP_FILE" "$AUTO_DEADLINE" armed; then
     err "deadman 记录写入失败；SSH 尚未修改"
     cancel_deadman_job "$JOB_ID" || true
     exit 1
@@ -404,7 +523,9 @@ apply_failure_handler() {
     if cancel_deadman_job "$JOB_ID"; then
       "${SUDO[@]}" rm -f "$DEADMAN_FILE"
     else
-      warn "恢复已完成，但 deadman 取消未确认；保留记录供自动路径再次恢复"
+      write_deadman_record "$JOB_ID" "$BACKUP_FILE" "$AUTO_DEADLINE" manual-restored ||
+        warn "恢复已完成，但无法写入 harmless ownership 状态"
+      warn "恢复已完成，但 deadman 取消未确认；后续自动任务将跳过 restore"
     fi
   fi
   exit "$status"

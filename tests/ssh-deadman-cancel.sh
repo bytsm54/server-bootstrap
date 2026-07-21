@@ -435,10 +435,44 @@ if run_second_pass_case absolute_deadline; then
   reset_case
   run_apply
   assert_status 0
-  [ "$(sed -n '3p' "$STATE_FILE")" = 2000000300 ] ||
-    fail "armed record does not persist the absolute automatic deadline"
+  [ "$(sed -n '3p' "$STATE_FILE")" = 2000000280 ] ||
+    fail "armed deadline does not match GNU at minute truncation"
   [ "$(sed -n '4p' "$STATE_FILE")" = armed ] ||
     fail "armed record does not persist its ownership state"
+fi
+
+if run_second_pass_case manual_restore_failed; then
+  reset_case
+  FAILED_BACKUP=/var/backups/sshd-bootstrap/sshd-manual-retry.tar.gz
+  write_new_record 42 "$FAILED_BACKUP"
+  export FAKE_RESTORE_FAIL=yes
+  run_ssh rollback
+  [ "$STATUS" -ne 0 ] || fail "failed manual restore returned success"
+  assert_before "atrm 42" "tar xzf $FAILED_BACKUP -C /"
+  [ "$(sed -n '2p' "$STATE_FILE")" = "$FAILED_BACKUP" ] ||
+    fail "failed manual restore lost its exact backup"
+  [ "$(sed -n '4p' "$STATE_FILE")" = manual-restore-failed ] ||
+    fail "cancelled job with failed restore remained falsely armed"
+
+  unset FAKE_RESTORE_FAIL
+  : >"$COMMAND_LOG"
+  run_ssh deadline
+  [ "$STATUS" -ne 0 ] || fail "deadline accepted manual-restore-failed state"
+  run_ssh confirm
+  [ "$STATUS" -ne 0 ] || fail "confirm accepted manual-restore-failed state"
+  run_apply
+  [ "$STATUS" -ne 0 ] || fail "apply replaced manual-restore-failed state"
+  [ "$(sed -n '4p' "$STATE_FILE")" = manual-restore-failed ] ||
+    fail "blocked transitions changed manual-restore-failed state"
+  assert_log_excludes "atrm 42"
+  assert_log_excludes "mutation-tee /etc/ssh/"
+
+  : >"$COMMAND_LOG"
+  run_ssh rollback
+  assert_status 0
+  assert_log_contains "tar xzf $FAILED_BACKUP -C /"
+  assert_log_excludes "atrm 42"
+  [ ! -e "$STATE_FILE" ] || fail "successful manual retry retained failed-restore state"
 fi
 
 if run_second_pass_case serialized_ownership; then

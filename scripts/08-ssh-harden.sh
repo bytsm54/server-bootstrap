@@ -333,10 +333,24 @@ if [ "$MODE" = "rollback" ]; then
   fi
 
   CANCEL_FAILED=0
-  if [ "$AUTO" -eq 0 ] && [ -n "$RECORDED_JOB" ]; then
+  CANCEL_SUCCEEDED=0
+  if [ "$AUTO" -eq 0 ] &&
+     [ "$RECORDED_STATE" != manual-restore-failed ] &&
+     [ -n "$RECORDED_JOB" ]; then
     log "回滚前取消 at 任务 $RECORDED_JOB"
-    if ! cancel_deadman_job "$RECORDED_JOB"; then
+    if cancel_deadman_job "$RECORDED_JOB"; then
+      CANCEL_SUCCEEDED=1
+    else
       CANCEL_FAILED=1
+    fi
+  fi
+
+  if [ "$CANCEL_SUCCEEDED" -eq 1 ]; then
+    [ -n "$RECORDED_DEADLINE" ] || RECORDED_DEADLINE=0
+    if ! write_deadman_record \
+      "$RECORDED_JOB" "$ROLLBACK_BACKUP" "$RECORDED_DEADLINE" manual-restore-failed; then
+      err "at 任务已取消，但无法持久化待恢复状态"
+      exit 1
     fi
   fi
 
@@ -452,7 +466,10 @@ if deadman_record_exists; then
     err "已有 deadman 记录但缺少 job ID；拒绝覆盖"
     exit 1
   fi
-  if [ -n "$PRIOR_BACKUP" ] && [ "$PRIOR_STATE" = manual-restored ]; then
+  if [ -n "$PRIOR_BACKUP" ] && [ "$PRIOR_STATE" = manual-restore-failed ]; then
+    err "上一次手动回滚尚未恢复成功；请先重试 rollback"
+    exit 1
+  elif [ -n "$PRIOR_BACKUP" ] && [ "$PRIOR_STATE" = manual-restored ]; then
     log "清理已完成手动回滚的 harmless ownership 记录"
     "${SUDO[@]}" rm -f "$DEADMAN_FILE"
   else
@@ -483,7 +500,7 @@ if [ "$USE_DEADMAN" -eq 1 ]; then
     err "无法读取当前 epoch 时间；SSH 尚未修改"
     exit 1
   fi
-  AUTO_DEADLINE=$((ARMED_AT_EPOCH + 10#$ROLLBACK_MIN * 60))
+  AUTO_DEADLINE=$((ARMED_AT_EPOCH / 60 * 60 + 10#$ROLLBACK_MIN * 60))
   printf -v ROLLBACK_SCRIPT_Q '%q' "$REPO_ROOT/scripts/08-ssh-harden.sh"
   printf -v BACKUP_FILE_Q '%q' "$BACKUP_FILE"
   ROLLBACK_CMD="bash $ROLLBACK_SCRIPT_Q rollback --auto --backup-file $BACKUP_FILE_Q"

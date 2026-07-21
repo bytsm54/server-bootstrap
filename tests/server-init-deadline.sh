@@ -73,16 +73,17 @@ run_case() {
   set -e
 }
 
-# Forty-five seconds consumed by apply must reduce the remaining manual wait.
-FAKE_NOW_EPOCH=1000000045
-FAKE_DEADLINE_EPOCH=1000000300
+# The arm time had a 20-second component. GNU at truncates it to the minute,
+# and forty-five seconds consumed by apply must further reduce the local wait.
+FAKE_NOW_EPOCH=2000000045
+FAKE_DEADLINE_EPOCH=2000000280
 unset FAKE_DEADLINE_MISSING
 printf 'yes\n已准备\n成功\n' >"$INPUT"
 run_case
 [ "$STATUS" -eq 0 ] || fail "delayed apply success path failed: $(cat "$OUTPUT")"
 grep -Fqx '08-ssh-harden.sh deadline' "$CALL_LOG" || fail "server-init did not read the armed deadline"
-grep -Fq '本地确认等待: 225 秒（比 deadman 提前 30 秒）' "$OUTPUT" ||
-  fail "server-init restarted a relative timer instead of using remaining time"
+grep -Fq '本地确认等待: 205 秒（比 deadman 提前 30 秒）' "$OUTPUT" ||
+  fail "server-init did not preserve its margin against the truncated at deadline"
 grep -Fqx '09-fail2ban.sh --ssh-port 22022' "$CALL_LOG" ||
   fail "confirmed delayed apply did not route the new port"
 

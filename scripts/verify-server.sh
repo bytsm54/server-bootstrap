@@ -88,18 +88,18 @@ if command -v ss >/dev/null 2>&1; then
   [ -z "$SSHD_PORTS" ] || ok "sshd:       listening on ${SSHD_PORTS}"
 fi
 
-if [ -f /var/run/sshd-bootstrap-deadman.atjob ] || sudo test -f /var/run/sshd-bootstrap-deadman.atjob 2>/dev/null; then
+if [ -f /var/run/sshd-bootstrap-deadman.atjob ] || sudo -n test -f /var/run/sshd-bootstrap-deadman.atjob 2>/dev/null; then
   warn "SSH:        发现挂起的 deadman 任务 — 你应该跑 phase 08 confirm 或 rollback"
 fi
 
 if command -v fail2ban-client >/dev/null 2>&1; then
-  if sudo systemctl is-active --quiet fail2ban 2>/dev/null; then
+  if sudo -n systemctl is-active --quiet fail2ban 2>/dev/null; then
     ok "fail2ban:   service active"
   else
     warn "fail2ban:   已装但 service 未运行（sudo systemctl start fail2ban）"
   fi
 
-  if sudo fail2ban-client status sshd >/dev/null 2>&1; then
+  if sudo -n fail2ban-client status sshd >/dev/null 2>&1; then
     ok "fail2ban:   sshd jail active"
   else
     warn "fail2ban:   sshd jail unavailable"

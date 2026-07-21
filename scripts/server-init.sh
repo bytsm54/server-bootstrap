@@ -54,14 +54,16 @@ valid_positive_int() {
 valid_hostname() {
   [ -z "$1" ] && return 0
   [ "${#1}" -le 63 ] || return 1
-  case "$1" in
-    -*|*-|*[!a-zA-Z0-9.-]*) return 1 ;;
-    *) return 0 ;;
-  esac
+  [[ "$1" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$ ]]
 }
 
 valid_timezone() {
-  [ -z "$1" ] || [ -f "/usr/share/zoneinfo/$1" ]
+  [ -z "$1" ] && return 0
+  case "/$1/" in
+    */./*|*/../*) return 1 ;;
+  esac
+  [[ "$1" =~ ^[a-zA-Z0-9._+-]+(/[a-zA-Z0-9._+-]+)*$ ]] &&
+    [ -f "/usr/share/zoneinfo/$1" ]
 }
 
 require_value() {

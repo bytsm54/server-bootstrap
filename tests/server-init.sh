@@ -141,7 +141,7 @@ grep -Fq -- '--git-email' "$OUTPUT" || fail "invalid email error does not identi
 
 write_input 'yes'
 run_server_init \
-  --hostname 'bad host' --timezone UTC \
+  --hostname .host --timezone UTC \
   --install-zsh no --node-version lts --npm-registry official --install-bun no \
   --git-name 'Test User' --git-email test@example.com \
   --harden-ssh no --enable-fail2ban no
@@ -151,7 +151,7 @@ grep -Fq -- '--hostname' "$OUTPUT" || fail "invalid hostname error does not iden
 
 write_input 'yes'
 run_server_init \
-  --hostname edge-host --timezone Not/A_Real_Zone__server_init \
+  --hostname edge-host --timezone ../../../etc/passwd \
   --install-zsh no --node-version lts --npm-registry official --install-bun no \
   --git-name 'Test User' --git-email test@example.com \
   --harden-ssh no --enable-fail2ban no

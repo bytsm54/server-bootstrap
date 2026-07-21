@@ -141,6 +141,73 @@ grep -Fq -- '--git-email' "$OUTPUT" || fail "invalid email error does not identi
 
 write_input 'yes'
 run_server_init \
+  --hostname edge-host --timezone UTC \
+  --install-zsh no --node-version '' --npm-registry official --install-bun no \
+  --git-name 'Test User' --git-email test@example.com \
+  --harden-ssh no --enable-fail2ban no
+assert_status 2
+grep -Fq -- '--node-version' "$OUTPUT" || fail "empty Node version error does not identify --node-version"
+[ ! -s "$CALL_LOG" ] || fail "empty Node version invoked phases"
+
+write_input 'yes'
+run_server_init \
+  --hostname edge-host --timezone UTC \
+  --install-zsh yes --zsh-theme '' \
+  --node-version lts --npm-registry official --install-bun no \
+  --git-name 'Test User' --git-email test@example.com \
+  --harden-ssh no --enable-fail2ban no
+assert_status 2
+grep -Fq -- '--zsh-theme' "$OUTPUT" || fail "empty zsh theme error does not identify --zsh-theme"
+[ ! -s "$CALL_LOG" ] || fail "empty zsh theme invoked phases"
+
+write_input 'yes'
+run_server_init \
+  --hostname edge-host --timezone '' \
+  --install-zsh no --node-version lts --npm-registry official --install-bun no \
+  --git-name 'Test User' --git-email test@example.com \
+  --harden-ssh no --enable-fail2ban no
+assert_status 2
+grep -Fq -- '--timezone' "$OUTPUT" || fail "empty timezone error does not identify --timezone"
+[ ! -s "$CALL_LOG" ] || fail "empty timezone invoked phases"
+
+write_input 'yes' '稍后'
+run_server_init \
+  --hostname edge-host --timezone UTC \
+  --install-zsh no --node-version lts --npm-registry official --install-bun no \
+  --git-name 'Test User' --git-email test@example.com \
+  --harden-ssh yes --ssh-port 22022 --ssh-allow-users '' \
+  --ssh-permit-root no --ssh-password-auth no --ssh-rollback-minutes 5 \
+  --enable-fail2ban no
+assert_status 2
+grep -Fq -- '--ssh-allow-users' "$OUTPUT" || fail "empty SSH allow-users error does not identify --ssh-allow-users"
+[ ! -s "$CALL_LOG" ] || fail "empty SSH allow-users invoked phases"
+
+write_input 'yes' '稍后'
+run_server_init \
+  --hostname edge-host --timezone UTC \
+  --install-zsh no --node-version lts --npm-registry official --install-bun no \
+  --git-name 'Test User' --git-email test@example.com \
+  --harden-ssh yes --ssh-port 22022 --ssh-allow-users 'tester,' \
+  --ssh-permit-root no --ssh-password-auth no --ssh-rollback-minutes 5 \
+  --enable-fail2ban no
+assert_status 2
+grep -Fq -- '--ssh-allow-users' "$OUTPUT" || fail "malformed SSH allow-users error does not identify --ssh-allow-users"
+[ ! -s "$CALL_LOG" ] || fail "malformed SSH allow-users invoked phases"
+
+write_input 'yes' '稍后'
+run_server_init \
+  --hostname edge-host --timezone UTC \
+  --install-zsh no --node-version lts --npm-registry official --install-bun no \
+  --git-name 'Test User' --git-email test@example.com \
+  --harden-ssh yes --ssh-port 22022 --ssh-allow-users 'tester root' \
+  --ssh-permit-root no --ssh-password-auth no --ssh-rollback-minutes 5 \
+  --enable-fail2ban no
+assert_status 2
+grep -Fq -- '--ssh-allow-users' "$OUTPUT" || fail "whitespace SSH allow-users error does not identify --ssh-allow-users"
+[ ! -s "$CALL_LOG" ] || fail "whitespace SSH allow-users invoked phases"
+
+write_input 'yes'
+run_server_init \
   --hostname .host --timezone UTC \
   --install-zsh no --node-version lts --npm-registry official --install-bun no \
   --git-name 'Test User' --git-email test@example.com \
@@ -203,13 +270,13 @@ run_server_init \
   --install-zsh yes --zsh-theme robbyrussell \
   --node-version 22 --npm-registry china --install-bun yes \
   --git-name 'CLI User' --git-email cli@example.com \
-  --harden-ssh yes --ssh-port 2222 --ssh-allow-users alpha,beta \
+  --harden-ssh yes --ssh-port 2222 --ssh-allow-users 'alpha@*.example.com,bob?' \
   --ssh-permit-root yes --ssh-password-auth yes --ssh-rollback-minutes 08 \
   --enable-fail2ban yes
 assert_status 0
 assert_log_contains '02a-system.sh --hostname edge-host --timezone UTC'
 assert_log_contains '02b-zsh.sh --theme robbyrussell'
-assert_log_contains '08-ssh-harden.sh apply --port 2222 --allow-users alpha,beta --permit-root yes --password-auth yes --rollback-after-minutes 08'
+assert_log_contains '08-ssh-harden.sh apply --port 2222 --allow-users alpha@*.example.com,bob? --permit-root yes --password-auth yes --rollback-after-minutes 08'
 assert_log_contains '08-ssh-harden.sh confirm'
 assert_log_contains '09-fail2ban.sh --ssh-port 2222'
 assert_log_excludes
@@ -220,6 +287,7 @@ run_server_init \
   --hostname '' \
   --timezone UTC \
   --install-zsh no \
+  --zsh-theme '' \
   --node-version 22 \
   --npm-registry china \
   --install-bun yes \

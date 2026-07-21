@@ -58,12 +58,30 @@ valid_hostname() {
 }
 
 valid_timezone() {
-  [ -z "$1" ] && return 0
+  [ -n "$1" ] || return 1
   case "/$1/" in
     */./*|*/../*) return 1 ;;
   esac
   [[ "$1" =~ ^[a-zA-Z0-9._+-]+(/[a-zA-Z0-9._+-]+)*$ ]] &&
     [ -f "/usr/share/zoneinfo/$1" ]
+}
+
+valid_user_list() {
+  local remaining="$1"
+  local user
+  [ -n "$remaining" ] || return 1
+  while :; do
+    case "$remaining" in
+      *,*)
+        user="${remaining%%,*}"
+        remaining="${remaining#*,}"
+        [ -n "$remaining" ] || return 1
+        ;;
+      *) user="$remaining"; remaining="" ;;
+    esac
+    [[ "$user" =~ ^[^[:space:],]+$ ]] || return 1
+    [ -n "$remaining" ] || break
+  done
 }
 
 require_value() {
@@ -102,7 +120,12 @@ run_phase() {
 validate_config() {
   valid_hostname "$HOSTNAME_VALUE" || { err "--hostname 格式不正确"; return 2; }
   valid_timezone "$TIMEZONE" || { err "--timezone 在 /usr/share/zoneinfo 中不存在"; return 2; }
+  [ -n "$NODE_VERSION" ] || { err "--node-version 不能为空"; return 2; }
   valid_yes_no "$INSTALL_ZSH" || { err "--install-zsh 必须是 yes 或 no"; return 2; }
+  if [ "$INSTALL_ZSH" = "yes" ] && [ -z "$ZSH_THEME" ]; then
+    err "--zsh-theme 在安装 zsh 时不能为空"
+    return 2
+  fi
   valid_yes_no "$INSTALL_BUN" || { err "--install-bun 必须是 yes 或 no"; return 2; }
   valid_yes_no "$HARDEN_SSH" || { err "--harden-ssh 必须是 yes 或 no"; return 2; }
   valid_yes_no "$SSH_PERMIT_ROOT" || { err "--ssh-permit-root 必须是 yes 或 no"; return 2; }
@@ -123,6 +146,13 @@ validate_config() {
   if [ "$HARDEN_SSH" = "yes" ] || [ "$SSH_ROLLBACK_MINUTES_SET" -eq 1 ]; then
     valid_positive_int "$SSH_ROLLBACK_MINUTES" || {
       err "--ssh-rollback-minutes 必须是正整数"
+      return 2
+    }
+  fi
+  if [ "$HARDEN_SSH" = "yes" ] &&
+     { [ "$SSH_ALLOW_USERS_SET" -eq 1 ] || [ -n "$SSH_ALLOW_USERS" ]; }; then
+    valid_user_list "$SSH_ALLOW_USERS" || {
+      err "--ssh-allow-users 必须是非空的逗号分隔用户列表"
       return 2
     }
   fi

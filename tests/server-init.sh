@@ -152,6 +152,16 @@ grep -Fq -- '--node-version' "$OUTPUT" || fail "empty Node version error does no
 write_input 'yes'
 run_server_init \
   --hostname edge-host --timezone UTC \
+  --install-zsh no --node-version banana --npm-registry official --install-bun no \
+  --git-name 'Test User' --git-email test@example.com \
+  --harden-ssh no --enable-fail2ban no
+assert_status 2
+grep -Fq -- '--node-version' "$OUTPUT" || fail "invalid Node version error does not identify --node-version"
+[ ! -s "$CALL_LOG" ] || fail "invalid Node version invoked phases"
+
+write_input 'yes'
+run_server_init \
+  --hostname edge-host --timezone UTC \
   --install-zsh yes --zsh-theme '' \
   --node-version lts --npm-registry official --install-bun no \
   --git-name 'Test User' --git-email test@example.com \
@@ -159,6 +169,17 @@ run_server_init \
 assert_status 2
 grep -Fq -- '--zsh-theme' "$OUTPUT" || fail "empty zsh theme error does not identify --zsh-theme"
 [ ! -s "$CALL_LOG" ] || fail "empty zsh theme invoked phases"
+
+write_input 'yes'
+run_server_init \
+  --hostname edge-host --timezone UTC \
+  --install-zsh no --zsh-theme '' \
+  --node-version lts --npm-registry official --install-bun no \
+  --git-name 'Test User' --git-email test@example.com \
+  --harden-ssh no --enable-fail2ban no
+assert_status 2
+grep -Fq -- '--zsh-theme' "$OUTPUT" || fail "empty disabled zsh theme error does not identify --zsh-theme"
+[ ! -s "$CALL_LOG" ] || fail "empty disabled zsh theme invoked phases"
 
 write_input 'yes'
 run_server_init \
@@ -205,6 +226,16 @@ run_server_init \
 assert_status 2
 grep -Fq -- '--ssh-allow-users' "$OUTPUT" || fail "whitespace SSH allow-users error does not identify --ssh-allow-users"
 [ ! -s "$CALL_LOG" ] || fail "whitespace SSH allow-users invoked phases"
+
+write_input 'yes'
+run_server_init \
+  --hostname edge-host --timezone UTC \
+  --install-zsh no --node-version lts --npm-registry official --install-bun no \
+  --git-name 'Test User' --git-email test@example.com \
+  --harden-ssh no --ssh-allow-users 'tester,' --enable-fail2ban no
+assert_status 2
+grep -Fq -- '--ssh-allow-users' "$OUTPUT" || fail "malformed disabled SSH allow-users error does not identify --ssh-allow-users"
+[ ! -s "$CALL_LOG" ] || fail "malformed disabled SSH allow-users invoked phases"
 
 write_input 'yes'
 run_server_init \
@@ -287,8 +318,7 @@ run_server_init \
   --hostname '' \
   --timezone UTC \
   --install-zsh no \
-  --zsh-theme '' \
-  --node-version 22 \
+  --node-version v22.1.0 \
   --npm-registry china \
   --install-bun yes \
   --git-name 'CLI User' \
@@ -296,7 +326,7 @@ run_server_init \
   --harden-ssh no \
   --enable-fail2ban yes
 assert_status 0
-assert_log_contains '03-node.sh --node-version 22 --npm-registry china --install-bun yes'
+assert_log_contains '03-node.sh --node-version v22.1.0 --npm-registry china --install-bun yes'
 assert_log_contains '09-fail2ban.sh --ssh-port 22'
 ! grep -Fq '02b-zsh.sh' "$CALL_LOG" || fail "disabled zsh phase was called"
 ! grep -Fq '08-ssh-harden.sh' "$CALL_LOG" || fail "disabled SSH phase was called"

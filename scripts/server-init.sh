@@ -51,6 +51,10 @@ valid_positive_int() {
   [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge 1 ]
 }
 
+valid_node_version() {
+  [ "$1" = "lts" ] || [[ "$1" =~ ^v?[0-9]+(\.[0-9]+){0,2}$ ]]
+}
+
 valid_hostname() {
   [ -z "$1" ] && return 0
   [ "${#1}" -le 63 ] || return 1
@@ -120,10 +124,14 @@ run_phase() {
 validate_config() {
   valid_hostname "$HOSTNAME_VALUE" || { err "--hostname 格式不正确"; return 2; }
   valid_timezone "$TIMEZONE" || { err "--timezone 在 /usr/share/zoneinfo 中不存在"; return 2; }
-  [ -n "$NODE_VERSION" ] || { err "--node-version 不能为空"; return 2; }
+  valid_node_version "$NODE_VERSION" || {
+    err "--node-version 必须是 lts 或 1-3 段数字版本（可选 v 前缀）"
+    return 2
+  }
   valid_yes_no "$INSTALL_ZSH" || { err "--install-zsh 必须是 yes 或 no"; return 2; }
-  if [ "$INSTALL_ZSH" = "yes" ] && [ -z "$ZSH_THEME" ]; then
-    err "--zsh-theme 在安装 zsh 时不能为空"
+  if { [ "$ZSH_THEME_SET" -eq 1 ] || [ "$INSTALL_ZSH" = "yes" ]; } &&
+     [ -z "$ZSH_THEME" ]; then
+    err "--zsh-theme 不能为空"
     return 2
   fi
   valid_yes_no "$INSTALL_BUN" || { err "--install-bun 必须是 yes 或 no"; return 2; }
@@ -149,8 +157,8 @@ validate_config() {
       return 2
     }
   fi
-  if [ "$HARDEN_SSH" = "yes" ] &&
-     { [ "$SSH_ALLOW_USERS_SET" -eq 1 ] || [ -n "$SSH_ALLOW_USERS" ]; }; then
+  if [ "$SSH_ALLOW_USERS_SET" -eq 1 ] ||
+     { [ "$HARDEN_SSH" = "yes" ] && [ -n "$SSH_ALLOW_USERS" ]; }; then
     valid_user_list "$SSH_ALLOW_USERS" || {
       err "--ssh-allow-users 必须是非空的逗号分隔用户列表"
       return 2

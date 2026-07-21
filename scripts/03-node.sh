@@ -195,15 +195,17 @@ SPECS.extend([
 ])
 
 def manage(path):
+    basename = os.path.basename(path)
+    active_specs = [spec for spec in SPECS if basename in spec['targets']]
+    if not active_specs:
+        return
     if not os.path.exists(path):
         open(path, 'a').close()
     with open(path) as f:
         content = f.read()
     original = content
     actions = []
-    for spec in SPECS:
-        if os.path.basename(path) not in spec['targets']:
-            continue
+    for spec in active_specs:
         if spec['cleanup_re'] is not None:
             content, removed = spec['cleanup_re'].subn('', content)
             if removed:
@@ -230,7 +232,7 @@ def manage(path):
     if content != original:
         with open(path, 'w') as f:
             f.write(content)
-    print(f'  ✅ {os.path.basename(path)}: ' + ' / '.join(actions))
+    print(f'  ✅ {basename}: ' + ' / '.join(actions))
 
 for rc in ('.bashrc', '.zshrc', '.zshenv'):
     manage(os.path.join(HOME, rc))

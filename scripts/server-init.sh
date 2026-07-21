@@ -461,7 +461,10 @@ EOF
 
     printf '请从第二个终端测试新端口；成功后输入“成功”，否则将立即回滚: '
     SSH_RESULT=""
-    SSH_TIMEOUT_SECONDS=$((10#$SSH_ROLLBACK_MINUTES * 60))
+    SSH_DEADMAN_MARGIN_SECONDS=30
+    SSH_TIMEOUT_SECONDS=$((10#$SSH_ROLLBACK_MINUTES * 60 - SSH_DEADMAN_MARGIN_SECONDS))
+    printf '\n本地确认等待: %s 秒（比 deadman 提前 %s 秒）\n' \
+      "$SSH_TIMEOUT_SECONDS" "$SSH_DEADMAN_MARGIN_SECONDS"
     if read -r -t "$SSH_TIMEOUT_SECONDS" SSH_RESULT && [ "$SSH_RESULT" = "成功" ]; then
       run_phase "确认 SSH 加固" bash "$SCRIPTS_DIR/08-ssh-harden.sh" confirm
       FAIL2BAN_SSH_PORT="$SSH_PORT"

@@ -74,10 +74,12 @@ export PATH="$FAKE_BIN:/usr/bin:/bin"
 bash "$ROOT_DIR/scripts/03-node.sh" --node-version lts --npm-registry official --install-bun no
 [ ! -e "$HOME/bun-installed" ] || fail "--install-bun no should skip Bun installation"
 ! grep -q 'server-bootstrap:bun-path' "$HOME/.bashrc" || fail "--install-bun no should skip the Bun PATH block"
+[ ! -e "$HOME/.zshenv" ] || fail "--install-bun no should not create an unused .zshenv"
 
 bash "$ROOT_DIR/scripts/03-node.sh" --node-version lts --npm-registry official --install-bun yes
 [ -x "$HOME/.bun/bin/bun" ] || fail "--install-bun yes should install Bun"
 [ -e "$HOME/bun-installed" ] || fail "the Bun installer should run"
 grep -q 'server-bootstrap:bun-path' "$HOME/.bashrc" || fail "--install-bun yes should add the Bun PATH block"
+grep -q 'server-bootstrap:bun-path' "$HOME/.zshenv" || fail "--install-bun yes should manage Bun in .zshenv"
 
 echo "node Bun option tests passed"

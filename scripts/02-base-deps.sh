@@ -3,6 +3,7 @@
 # 只在以下任一不存在时调用 sudo apt：
 #   - curl
 #   - git
+#   - python3
 #   - ca-certificates 包
 #   - build-essential 包（部分 npm 原生模块需要）
 #
@@ -14,13 +15,13 @@ log()  { printf '\033[1;34m[02-base-deps]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m  ✅\033[0m %s\n' "$*"; }
 err()  { printf '\033[1;31m  ❌\033[0m %s\n' "$*" >&2; }
 
-PKGS=(curl ca-certificates git build-essential at fonts-powerline)
+PKGS=(curl ca-certificates git build-essential at fonts-powerline python3)
 
 # 缺啥
 MISSING=()
 for p in "${PKGS[@]}"; do
   case "$p" in
-    curl|git|at)
+    curl|git|at|python3)
       command -v "$p" >/dev/null 2>&1 || MISSING+=("$p")
       ;;
     *)
@@ -57,7 +58,7 @@ log "sudo apt-get install -y --no-install-recommends ${MISSING[*]}"
 # 校验
 for p in "${MISSING[@]}"; do
   case "$p" in
-    curl|git|at)
+    curl|git|at|python3)
       command -v "$p" >/dev/null 2>&1 || { err "$p 装完仍找不到"; exit 1; }
       ;;
     *)

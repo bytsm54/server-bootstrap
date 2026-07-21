@@ -8,13 +8,13 @@
 #            [--password-auth no|yes]                   (默认 no)
 #            [--rollback-after-minutes <N>]             (默认 5)
 #            [--no-deadman]                             (跳过自动回滚, 不推荐)
-#     备份 + 写新配置 + sshd -t + reload + 调度 deadman 自动回滚
+#     备份 + 调度/记录 deadman + 写新配置 + sshd -t + reload
 #
 #   confirm
 #     新端口已验证可登录, 取消 deadman 自动回滚
 #
 #   rollback [--auto]
-#     立即回滚到最近一次备份
+#     立即回滚到当前 deadman 记录对应的备份（旧记录回退到最近备份）
 #     --auto: 由 deadman 触发, 仅用于日志区分
 #
 # 安全约束（脚本内强制）：
@@ -78,9 +78,90 @@ read_deadman_job_id() {
   "${SUDO[@]}" cat "$DEADMAN_FILE" 2>/dev/null | head -1
 }
 
+read_deadman_backup_file() {
+  "${SUDO[@]}" cat "$DEADMAN_FILE" 2>/dev/null | sed -n '2p'
+}
+
 cancel_deadman_job() {
   local job_id="$1"
-  "${SUDO[@]}" atrm "$job_id" 2>/dev/null || warn "atrm 失败（任务可能已超时执行）"
+  if ! "${SUDO[@]}" atrm "$job_id" 2>/dev/null; then
+    err "无法确认 at 任务 $job_id 已取消；保留 deadman 记录"
+    return 1
+  fi
+}
+
+write_deadman_record() {
+  local job_id="$1"
+  local backup_file="$2"
+  local temp_file="${DEADMAN_FILE}.tmp.$$"
+
+  if ! printf '%s\n%s\n' "$job_id" "$backup_file" |
+       "${SUDO[@]}" tee "$temp_file" >/dev/null; then
+    "${SUDO[@]}" rm -f "$temp_file" 2>/dev/null || true
+    return 1
+  fi
+  "${SUDO[@]}" chmod 600 "$temp_file" || {
+    "${SUDO[@]}" rm -f "$temp_file" 2>/dev/null || true
+    return 1
+  }
+  "${SUDO[@]}" mv "$temp_file" "$DEADMAN_FILE" || {
+    "${SUDO[@]}" rm -f "$temp_file" 2>/dev/null || true
+    return 1
+  }
+}
+
+latest_backup_file() {
+  if "${SUDO[@]}" test -d "$BACKUP_DIR"; then
+    "${SUDO[@]}" sh -c "ls -1t '$BACKUP_DIR'/sshd-*.tar.gz 2>/dev/null | head -1" || true
+  fi
+}
+
+restore_ssh_backup() {
+  local backup_file="$1"
+  local socket_override=""
+  local relative_path=""
+
+  if ! "${SUDO[@]}" rm -f "$SSHD_DROPIN_DIR/$DROPIN_NAME"; then
+    err "无法移除 SSH drop-in"
+    return 1
+  fi
+  if ! "${SUDO[@]}" tar xzf "$backup_file" -C /; then
+    err "无法恢复 SSH 备份 $backup_file"
+    return 1
+  fi
+
+  if [ -n "$SOCKET_UNIT" ]; then
+    socket_override="$(socket_override_path "$SOCKET_UNIT")"
+    relative_path="${socket_override#/}"
+    if "${SUDO[@]}" test -f "$socket_override" &&
+       ! "${SUDO[@]}" tar tzf "$backup_file" 2>/dev/null | grep -qx "$relative_path"; then
+      log "删除 apply 时新建的 $SOCKET_UNIT override"
+      if ! "${SUDO[@]}" rm -f "$socket_override"; then
+        err "无法移除 $SOCKET_UNIT override"
+        return 1
+      fi
+    fi
+    log "daemon-reload + 重启 $SOCKET_UNIT, 让恢复后的配置生效"
+    if ! "${SUDO[@]}" systemctl daemon-reload; then
+      err "systemd daemon-reload 失败"
+      return 1
+    fi
+    if ! "${SUDO[@]}" systemctl restart "$SOCKET_UNIT"; then
+      err "重启 $SOCKET_UNIT 失败, 端口可能未恢复"
+      return 1
+    fi
+  fi
+
+  if ! "${SUDO[@]}" sshd -t 2>/dev/null; then
+    err "回滚后 sshd -t 仍失败, 可能配置已损坏, 不要 reload sshd！"
+    err "请人工 ssh 进去（旧端口的会话还活着）查 $SSHD_MAIN"
+    return 1
+  fi
+  if ! "${SUDO[@]}" systemctl reload ssh 2>/dev/null &&
+     ! "${SUDO[@]}" systemctl reload sshd 2>/dev/null; then
+    err "reload sshd 失败"
+    return 1
+  fi
 }
 
 # 必须在 SUDO 定义之后才能用 systemctl 探测
@@ -107,7 +188,7 @@ if [ "$MODE" = "confirm" ]; then
   JOB_ID="$("${SUDO[@]}" cat "$DEADMAN_FILE" 2>/dev/null | head -1)"
   if [ -n "$JOB_ID" ]; then
     log "取消 at 任务 $JOB_ID"
-    "${SUDO[@]}" atrm "$JOB_ID" 2>/dev/null || warn "atrm 失败（任务可能已超时执行）"
+    cancel_deadman_job "$JOB_ID" || exit 1
   fi
   "${SUDO[@]}" rm -f "$DEADMAN_FILE"
   ok "已确认成功, deadman 已取消"
@@ -119,13 +200,36 @@ fi
 # ---------------------------------------------------------------------------
 if [ "$MODE" = "rollback" ]; then
   AUTO=0
-  [ "${1:-}" = "--auto" ] && AUTO=1
+  REQUESTED_BACKUP=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --auto) AUTO=1; shift ;;
+      --backup-file)
+        [ "$#" -ge 2 ] || { err "--backup-file 需要一个值"; exit 2; }
+        REQUESTED_BACKUP="$2"
+        shift 2
+        ;;
+      *) err "rollback: 未知参数 $1"; exit 2 ;;
+    esac
+  done
 
-  LATEST=""
-  if "${SUDO[@]}" test -d "$BACKUP_DIR"; then
-    LATEST="$("${SUDO[@]}" sh -c "ls -1t '$BACKUP_DIR'/sshd-*.tar.gz 2>/dev/null | head -1" || true)"
+  RECORDED_JOB=""
+  RECORDED_BACKUP=""
+  if deadman_record_exists; then
+    RECORDED_JOB="$(read_deadman_job_id)"
+    RECORDED_BACKUP="$(read_deadman_backup_file)"
   fi
-  if [ -z "$LATEST" ]; then
+
+  if [ "$AUTO" -eq 1 ] && [ -n "$REQUESTED_BACKUP" ] &&
+     [ "$RECORDED_BACKUP" != "$REQUESTED_BACKUP" ]; then
+    warn "忽略 stale deadman：matching backup 已不再拥有当前记录"
+    exit 0
+  fi
+
+  ROLLBACK_BACKUP="$REQUESTED_BACKUP"
+  [ -n "$ROLLBACK_BACKUP" ] || ROLLBACK_BACKUP="$RECORDED_BACKUP"
+  [ -n "$ROLLBACK_BACKUP" ] || ROLLBACK_BACKUP="$(latest_backup_file)"
+  if [ -z "$ROLLBACK_BACKUP" ]; then
     err "没有可用的备份, 无法回滚"
     exit 1
   fi
@@ -133,49 +237,20 @@ if [ "$MODE" = "rollback" ]; then
   if [ "$AUTO" -eq 1 ]; then
     warn "deadman 自动触发回滚（用户在窗口期内未 confirm）"
   else
-    log "手动回滚到 $LATEST"
+    log "手动回滚到 $ROLLBACK_BACKUP"
   fi
 
-  if [ "$AUTO" -eq 0 ] && deadman_record_exists; then
-    JOB_ID="$(read_deadman_job_id)"
-    [ -z "$JOB_ID" ] || cancel_deadman_job "$JOB_ID"
+  restore_ssh_backup "$ROLLBACK_BACKUP" || exit 1
+
+  if [ "$AUTO" -eq 0 ] && [ -n "$RECORDED_JOB" ]; then
+    cancel_deadman_job "$RECORDED_JOB" || exit 1
+    "${SUDO[@]}" rm -f "$DEADMAN_FILE"
+  elif [ "$AUTO" -eq 1 ] && [ -n "$RECORDED_BACKUP" ] &&
+       [ "$RECORDED_BACKUP" = "$ROLLBACK_BACKUP" ]; then
+    "${SUDO[@]}" rm -f "$DEADMAN_FILE"
   fi
 
-  # 移除 drop-in（apply 时创建, 备份不含, tar xzf 不会删）
-  "${SUDO[@]}" rm -f "$SSHD_DROPIN_DIR/$DROPIN_NAME"
-
-  # 解包恢复 sshd_config 主文件 + 备份里包含的 socket override（若 pre-apply 就存在）
-  "${SUDO[@]}" tar xzf "$LATEST" -C /
-
-  # 处理 socket override：
-  #   - 如果文件还在但备份里不包含它 → 是 apply 时新建的, 删除
-  #   - 然后 daemon-reload + 重启 socket, 让"恢复后的"配置（不管是有还是没有 override）生效
-  if [ -n "$SOCKET_UNIT" ]; then
-    SOCKET_OVERRIDE="$(socket_override_path "$SOCKET_UNIT")"
-    REL_PATH="${SOCKET_OVERRIDE#/}"
-    if "${SUDO[@]}" test -f "$SOCKET_OVERRIDE" && \
-       ! "${SUDO[@]}" tar tzf "$LATEST" 2>/dev/null | grep -qx "$REL_PATH"; then
-      log "删除 apply 时新建的 $SOCKET_UNIT override"
-      "${SUDO[@]}" rm -f "$SOCKET_OVERRIDE"
-    fi
-    log "daemon-reload + 重启 $SOCKET_UNIT, 让恢复后的配置生效"
-    "${SUDO[@]}" systemctl daemon-reload
-    "${SUDO[@]}" systemctl restart "$SOCKET_UNIT" || \
-      warn "重启 $SOCKET_UNIT 失败, 端口可能未恢复"
-  fi
-
-  # 校验恢复后的 sshd_config
-  if ! "${SUDO[@]}" sshd -t 2>/dev/null; then
-    err "回滚后 sshd -t 仍失败, 可能配置已损坏, 不要 reload sshd！"
-    err "请人工 ssh 进去（旧端口的会话还活着）查 $SSHD_MAIN"
-    exit 1
-  fi
-  "${SUDO[@]}" systemctl reload ssh 2>/dev/null || \
-    "${SUDO[@]}" systemctl reload sshd 2>/dev/null || \
-    err "reload sshd 失败"
-
-  "${SUDO[@]}" rm -f "$DEADMAN_FILE"
-  ok "已回滚到 $LATEST 并 reload sshd"
+  ok "已回滚到 $ROLLBACK_BACKUP 并 reload sshd"
   exit 0
 fi
 
@@ -261,10 +336,23 @@ if [ "$USE_DEADMAN" -eq 1 ]; then
   fi
 fi
 
+# A previous apply owns the current record until its queued job is proven cancelled.
+# Never overwrite that ownership with a new job while the old job may still execute.
+if deadman_record_exists; then
+  PRIOR_JOB_ID="$(read_deadman_job_id)"
+  if [ -z "$PRIOR_JOB_ID" ]; then
+    err "已有 deadman 记录但缺少 job ID；拒绝覆盖"
+    exit 1
+  fi
+  log "取消上一次未确认的 at 任务 $PRIOR_JOB_ID"
+  cancel_deadman_job "$PRIOR_JOB_ID" || exit 1
+  "${SUDO[@]}" rm -f "$DEADMAN_FILE"
+fi
+
 # --- 备份
 TS="$(date +%Y%m%d-%H%M%S)"
 "${SUDO[@]}" mkdir -p "$BACKUP_DIR"
-BACKUP_FILE="$BACKUP_DIR/sshd-$TS.tar.gz"
+BACKUP_FILE="$BACKUP_DIR/sshd-$TS-$$.tar.gz"
 log "备份 /etc/ssh（+socket override 如有）→ $BACKUP_FILE"
 BACKUP_PATHS=(etc/ssh/sshd_config)
 "${SUDO[@]}" test -d /etc/ssh/sshd_config.d         && BACKUP_PATHS+=(etc/ssh/sshd_config.d)
@@ -272,6 +360,58 @@ BACKUP_PATHS=(etc/ssh/sshd_config)
 "${SUDO[@]}" test -d /etc/systemd/system/sshd.socket.d && BACKUP_PATHS+=(etc/systemd/system/sshd.socket.d)
 "${SUDO[@]}" tar czf "$BACKUP_FILE" -C / "${BACKUP_PATHS[@]}"
 ok "备份完成"
+
+# --- 在任何 live SSH mutation 之前调度并持久化 matching deadman
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DEADMAN_ARMED=0
+if [ "$USE_DEADMAN" -eq 1 ]; then
+  printf -v ROLLBACK_SCRIPT_Q '%q' "$REPO_ROOT/scripts/08-ssh-harden.sh"
+  printf -v BACKUP_FILE_Q '%q' "$BACKUP_FILE"
+  ROLLBACK_CMD="bash $ROLLBACK_SCRIPT_Q rollback --auto --backup-file $BACKUP_FILE_Q"
+  log "调度 deadman: $ROLLBACK_MIN 分钟后自动回滚（除非你跑 confirm）"
+  if ! AT_OUT="$(echo "$ROLLBACK_CMD" | "${SUDO[@]}" at "now + $ROLLBACK_MIN minutes" 2>&1)"; then
+    err "at 调度失败：$AT_OUT"
+    exit 1
+  fi
+  JOB_ID="$(echo "$AT_OUT" | sed -nE 's/^job ([0-9]+).*/\1/p' | head -1)"
+  if [ -z "$JOB_ID" ]; then
+    err "at 调度结果无法解析 job ID：$AT_OUT"
+    exit 1
+  fi
+  if ! write_deadman_record "$JOB_ID" "$BACKUP_FILE"; then
+    err "deadman 记录写入失败；SSH 尚未修改"
+    cancel_deadman_job "$JOB_ID" || true
+    exit 1
+  fi
+  DEADMAN_ARMED=1
+  ok "deadman job=$JOB_ID, matching backup=$BACKUP_FILE"
+fi
+
+apply_failure_handler() {
+  local status="${1:-1}"
+  local restored=0
+
+  trap - ERR
+  set +e
+  err "apply 失败；恢复 matching backup $BACKUP_FILE"
+  if restore_ssh_backup "$BACKUP_FILE"; then
+    restored=1
+  else
+    err "matching backup 恢复失败；保留 deadman 作为后备"
+  fi
+
+  if [ "$DEADMAN_ARMED" -eq 1 ] && [ "$restored" -eq 1 ]; then
+    if cancel_deadman_job "$JOB_ID"; then
+      "${SUDO[@]}" rm -f "$DEADMAN_FILE"
+    else
+      warn "恢复已完成，但 deadman 取消未确认；保留记录供自动路径再次恢复"
+    fi
+  fi
+  exit "$status"
+}
+
+# From this point onward, every failure must restore the backup paired above.
+trap 'apply_failure_handler $?' ERR
 
 # --- 检测主 sshd_config 是否有 Include 指令
 USE_DROPIN=0
@@ -312,11 +452,7 @@ fi
 log "sshd -t 校验"
 if ! "${SUDO[@]}" sshd -t; then
   err "sshd -t 失败！立即回滚"
-  if [ "$USE_DROPIN" -eq 1 ]; then
-    "${SUDO[@]}" rm -f "$SSHD_DROPIN_DIR/$DROPIN_NAME"
-  fi
-  "${SUDO[@]}" tar xzf "$BACKUP_FILE" -C /
-  exit 1
+  apply_failure_handler 1
 fi
 ok "sshd -t 通过"
 
@@ -324,7 +460,7 @@ ok "sshd -t 通过"
 log "systemctl reload sshd（保活当前会话）"
 "${SUDO[@]}" systemctl reload ssh 2>/dev/null || \
   "${SUDO[@]}" systemctl reload sshd 2>/dev/null || \
-  { err "reload 失败"; exit 1; }
+  { err "reload 失败"; apply_failure_handler 1; }
 ok "sshd reloaded"
 
 # --- socket activation 处理
@@ -351,14 +487,7 @@ EOF
   log "重启 $SOCKET_UNIT（仅切换 listening fd, 已建立的 SSH 会话不受影响）"
   if ! "${SUDO[@]}" systemctl restart "$SOCKET_UNIT"; then
     err "重启 $SOCKET_UNIT 失败, 立即回滚"
-    "${SUDO[@]}" rm -f "$SOCKET_OVERRIDE"
-    "${SUDO[@]}" systemctl daemon-reload
-    "${SUDO[@]}" systemctl restart "$SOCKET_UNIT" 2>/dev/null || true
-    if [ "$USE_DROPIN" -eq 1 ]; then
-      "${SUDO[@]}" rm -f "$SSHD_DROPIN_DIR/$DROPIN_NAME"
-    fi
-    "${SUDO[@]}" tar xzf "$BACKUP_FILE" -C /
-    exit 1
+    apply_failure_handler 1
   fi
   ok "$SOCKET_UNIT 已切换到端口 $PORT"
 else
@@ -378,32 +507,11 @@ done
 if [ "$PORT_LISTEN_OK" -ne 1 ]; then
   err "端口 $PORT 没有任何进程监听！立即内联回滚"
   err "可能原因：socket activation 切换失败 / 端口已被占用 / sshd 启动失败"
-  if [ -n "$SOCKET_OVERRIDE" ] && "${SUDO[@]}" test -f "$SOCKET_OVERRIDE"; then
-    "${SUDO[@]}" rm -f "$SOCKET_OVERRIDE"
-    "${SUDO[@]}" systemctl daemon-reload
-    "${SUDO[@]}" systemctl restart "$SOCKET_UNIT" 2>/dev/null || true
-  fi
-  if [ "$USE_DROPIN" -eq 1 ]; then
-    "${SUDO[@]}" rm -f "$SSHD_DROPIN_DIR/$DROPIN_NAME"
-  fi
-  "${SUDO[@]}" tar xzf "$BACKUP_FILE" -C /
-  "${SUDO[@]}" systemctl reload ssh 2>/dev/null || \
-    "${SUDO[@]}" systemctl reload sshd 2>/dev/null || true
-  exit 1
+  apply_failure_handler 1
 fi
 ok "端口 $PORT 已确认监听"
 
-# --- 调度 deadman
-if [ "$USE_DEADMAN" -eq 1 ]; then
-  REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-  ROLLBACK_CMD="bash $REPO_ROOT/scripts/08-ssh-harden.sh rollback --auto"
-  log "调度 deadman: $ROLLBACK_MIN 分钟后自动回滚（除非你跑 confirm）"
-  AT_OUT="$(echo "$ROLLBACK_CMD" | "${SUDO[@]}" at "now + $ROLLBACK_MIN minutes" 2>&1 || true)"
-  echo "$AT_OUT" | grep -q '^job ' || { err "at 调度失败：$AT_OUT"; exit 1; }
-  JOB_ID="$(echo "$AT_OUT" | grep -oP 'job \K[0-9]+' | head -1)"
-  echo "$JOB_ID" | "${SUDO[@]}" tee "$DEADMAN_FILE" >/dev/null
-  ok "deadman job=$JOB_ID, 将于 $ROLLBACK_MIN 分钟后触发自动回滚"
-fi
+trap - ERR
 
 cat <<EOF
 

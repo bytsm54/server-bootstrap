@@ -376,6 +376,8 @@ run_server_init \
 assert_status 0
 assert_log_contains '08-ssh-harden.sh rollback'
 assert_log_contains '09-fail2ban.sh --ssh-port 22'
+grep -Fq '本地确认等待: 30 秒（比 deadman 提前 30 秒）' "$OUTPUT" ||
+  fail "manual rollback deadline is not observably earlier than the one-minute deadman"
 assert_log_excludes
 
 # An SSH apply failure stops before confirm, rollback, fail2ban, and verification.

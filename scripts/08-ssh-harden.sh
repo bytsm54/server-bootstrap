@@ -70,6 +70,19 @@ else
   SUDO=()
 fi
 
+deadman_record_exists() {
+  "${SUDO[@]}" test -s "$DEADMAN_FILE"
+}
+
+read_deadman_job_id() {
+  "${SUDO[@]}" cat "$DEADMAN_FILE" 2>/dev/null | head -1
+}
+
+cancel_deadman_job() {
+  local job_id="$1"
+  "${SUDO[@]}" atrm "$job_id" 2>/dev/null || warn "atrm 失败（任务可能已超时执行）"
+}
+
 # 必须在 SUDO 定义之后才能用 systemctl 探测
 SOCKET_UNIT="$(detect_socket_unit || true)"
 
@@ -121,6 +134,11 @@ if [ "$MODE" = "rollback" ]; then
     warn "deadman 自动触发回滚（用户在窗口期内未 confirm）"
   else
     log "手动回滚到 $LATEST"
+  fi
+
+  if [ "$AUTO" -eq 0 ] && deadman_record_exists; then
+    JOB_ID="$(read_deadman_job_id)"
+    [ -z "$JOB_ID" ] || cancel_deadman_job "$JOB_ID"
   fi
 
   # 移除 drop-in（apply 时创建, 备份不含, tar xzf 不会删）

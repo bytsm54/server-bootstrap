@@ -11,3 +11,6 @@
 # Editor
 .vscode/
 .idea/
+
+# Isolated feature worktrees
+.worktrees/

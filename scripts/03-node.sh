@@ -23,9 +23,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/toolchain.sh"
 
 NODE_VERSION="lts"
-NPM_REGISTRY="official"
+NPM_REGISTRY="china"
 INSTALL_BUN="yes"
+# These values bind both mirror and upstream installs to the reviewed nvm release.
+# Update the tag and peeled tag commit together.
 NVM_INSTALLER_TAG="${NVM_INSTALLER_TAG:-v0.40.3}"
+NVM_EXPECTED_COMMIT="${NVM_EXPECTED_COMMIT:-977563e97ddc66facf3a8e31c6cff01d236f09bd}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -46,18 +49,53 @@ case "$INSTALL_BUN" in
   *) err "--install-bun 必须是 yes 或 no"; exit 2 ;;
 esac
 
+case "$NPM_REGISTRY" in
+  china)
+    NVM_REPOSITORY_URL="${NVM_SOURCE:-https://gitee.com/mirrors/nvm.git}"
+    export NVM_NODEJS_ORG_MIRROR="${NVM_NODEJS_ORG_MIRROR:-https://npmmirror.com/mirrors/node}"
+    ;;
+  official|"")
+    NVM_REPOSITORY_URL="${NVM_SOURCE:-https://github.com/nvm-sh/nvm.git}"
+    ;;
+  *)
+    err "--npm-registry 必须是 official 或 china（你给了 $NPM_REGISTRY）"
+    exit 2
+    ;;
+esac
+
 export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 
 # --- 1. 装 nvm（如果没装）
 if [ -s "$NVM_DIR/nvm.sh" ]; then
   ok "nvm 已存在 ($NVM_DIR)"
 else
+  NVM_PARENT_DIR="$(dirname "$NVM_DIR")"
+  mkdir -p "$NVM_PARENT_DIR"
+  NVM_STAGING_DIR="$(mktemp -d "$NVM_PARENT_DIR/.nvm-staging.XXXXXX")"
   log "安装 nvm $NVM_INSTALLER_TAG 到 $NVM_DIR"
-  curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/$NVM_INSTALLER_TAG/install.sh" | bash
-  if [ ! -s "$NVM_DIR/nvm.sh" ]; then
-    err "nvm 安装后 $NVM_DIR/nvm.sh 仍不存在"
+  if ! git clone --quiet --depth=1 --branch "$NVM_INSTALLER_TAG" \
+    "$NVM_REPOSITORY_URL" "$NVM_STAGING_DIR"; then
+    rm -rf -- "$NVM_STAGING_DIR"
+    err "nvm 仓库下载失败: $NVM_REPOSITORY_URL"
     exit 1
   fi
+  NVM_ACTUAL_COMMIT="$(git -C "$NVM_STAGING_DIR" rev-parse HEAD 2>/dev/null || true)"
+  if [ "$NVM_ACTUAL_COMMIT" != "$NVM_EXPECTED_COMMIT" ]; then
+    err "nvm commit 校验失败，未验证目录保留在 $NVM_STAGING_DIR"
+    err "期望: $NVM_EXPECTED_COMMIT"
+    err "实际: ${NVM_ACTUAL_COMMIT:-unknown}"
+    exit 1
+  fi
+  if [ ! -s "$NVM_STAGING_DIR/nvm.sh" ]; then
+    err "已验证的 nvm 仓库缺少 nvm.sh，目录保留在 $NVM_STAGING_DIR"
+    exit 1
+  fi
+  if [ -e "$NVM_DIR" ]; then
+    rm -rf -- "$NVM_STAGING_DIR"
+    err "$NVM_DIR 已存在但 nvm.sh 不完整，请先移走该目录后重跑"
+    exit 1
+  fi
+  mv "$NVM_STAGING_DIR" "$NVM_DIR"
   ok "nvm 安装完成"
 fi
 
@@ -143,10 +181,9 @@ fi
 #                  少了这步 hook 启动后报 "Bun not found"
 #
 #   nvm-load     → .bashrc / .zshrc
-#                  nvm installer 只改装时 $SHELL 指向的那一个 rc 文件 (在 bootstrap.sh
-#                  阶段 $SHELL=bash → 只动 .bashrc), 02b 把默认 shell 切 zsh 后,
-#                  .zshrc 没有 nvm 加载, 重新登录 node/npm/npx/claude 都找不到。
-#                  我们这里强制把加载行也写进 .zshrc。
+#                  nvm 仓库是直接 clone 的，不会自动修改 shell rc。02b 把默认 shell
+#                  切到 zsh 后仍需要显式加载 nvm，否则重新登录后 node/npm/npx 都找不到。
+#                  我们这里同时把加载行写进 .bashrc 和 .zshrc。
 #
 #   localbin-path → .bashrc / .zshrc
 #                   ~/.local/bin 是 Claude Code / Codex / RTK 等 CLI 落地路径; 追加到
@@ -182,7 +219,7 @@ SPECS.extend([
             '[ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"\n'
         ),
         'targets': ('.bashrc', '.zshrc'),
-        'cleanup_re': None,  # 不动 nvm installer 块, 重复 source 是 no-op
+        'cleanup_re': None,  # 兼容旧版 nvm installer 块, 重复 source 是 no-op
     },
     {
         'marker': '# server-bootstrap:localbin-path (managed by 03-node.sh, do not edit)',

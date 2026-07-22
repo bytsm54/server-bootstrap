@@ -87,7 +87,7 @@ run_phase "Phase 02 — apt 基础依赖" \
   bash "$REPO_DIR/scripts/02-base-deps.sh"
 
 run_phase "Phase 03 — Node (nvm)" \
-  bash "$REPO_DIR/scripts/03-node.sh" --node-version "${NODE_VERSION:-lts}" --npm-registry "${NPM_REGISTRY:-official}"
+  bash "$REPO_DIR/scripts/03-node.sh" --node-version "${NODE_VERSION:-lts}" --npm-registry "${NPM_REGISTRY:-china}"
 
 run_phase "Phase 04 — Claude Code CLI" \
   bash "$REPO_DIR/scripts/04-claude-code.sh" --method "${CLAUDE_INSTALL_METHOD:-auto}" ${CLAUDE_VERSION:+--version "$CLAUDE_VERSION"}

@@ -32,7 +32,7 @@ bash ~/server-bootstrap/scripts/server-init.sh \
   --install-zsh yes \
   --zsh-theme powerlevel10k/powerlevel10k \
   --node-version 22 \
-  --npm-registry official \
+  --npm-registry china \
   --install-bun yes \
   --git-name "Your Name" \
   --git-email you@example.com \
@@ -44,6 +44,17 @@ bash ~/server-bootstrap/scripts/server-init.sh \
   --ssh-rollback-minutes 5 \
   --enable-fail2ban yes
 ```
+
+Node.js 安装默认针对国内网络优化，无需手工设置环境变量：nvm 从 Gitee 镜像安装，Node 二进制从 npmmirror 下载，npm 包使用 npmmirror registry。镜像故障时可显式传 `--npm-registry official` 临时切回上游源。
+
+nvm 不执行远程 installer：脚本先把 `v0.40.3` clone 到临时目录，核对上游 tag 对应的 Git commit，校验通过后才原子移动到 `~/.nvm` 并 source。严格切回上游时先清掉自定义覆盖：
+
+```bash
+unset NVM_SOURCE NVM_NODEJS_ORG_MIRROR NVM_INSTALLER_TAG NVM_EXPECTED_COMMIT
+bash ~/server-bootstrap/scripts/server-init.sh --npm-registry official
+```
+
+如果主动换成其他可信 nvm 镜像或版本，还必须同时提供与该 tag 匹配的 `NVM_EXPECTED_COMMIT`。
 
 ---
 

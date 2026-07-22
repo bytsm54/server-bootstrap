@@ -52,7 +52,7 @@ claude   # 登录
 | `hostname` | （空, 跳过） | 设系统 hostname, 同步 /etc/hosts 127.0.1.1 行 |
 | `timezone` | `Asia/Shanghai` | 设时区, 如 `Asia/Shanghai`、`UTC`、`America/New_York`。空字符串才跳过 |
 | `node_version` | `lts` | nvm install 的 Node 版本, 如 `lts`、`20`、`22.5.0` |
-| `npm_registry` | `official` | `china` (npmmirror.com) 或 `official` (npmjs.org)。**中国大陆用户强烈建议设 `china`** |
+| `npm_registry` | `china` | 国内默认会同时使用 Gitee nvm 镜像、npmmirror Node 二进制和 npm registry；镜像故障时显式设 `official` 回退上游源 |
 | `claude_install_method` | `auto` | `auto`（github 失败回落 curl）/ `github`（GitHub releases 直下二进制, **国内推荐**, 走 github.com 不经 Cloudflare）/ `curl`（claude.ai/install.sh, 国内常 403）。**npm 方式已被 Anthropic 弃用, 本 skill 不再提供** |
 | `claude_version` | （空）= latest | 显式钉版本如 `v2.1.119`, 跳过 GitHub API 查询（API 60 次/小时限流时有用） |
 | `install_zsh` | `true` | 进入 phase 02b：装 zsh + oh-my-zsh + powerlevel10k 主题 + 设默认 shell。`false` 跳过 |
@@ -68,6 +68,8 @@ claude   # 登录
 | `ssh_password_auth` | `no` | `no` 或 `yes`. 选 `no` 时脚本会校验 `allow_users` 都有 `authorized_keys`, 否则拒绝执行（避免锁死） |
 | `ssh_rollback_after_minutes` | `5` | deadman 自动回滚窗口 |
 | `enable_fail2ban` | `true` | 进入 phase 09: 装 fail2ban + 配 sshd jail 防暴力破解。即使 `harden_ssh=false` 也可独立开 (jail 监听 22) |
+
+国内 nvm 镜像会先 clone 到临时目录，核对固定的上游 tag commit 后才移入 `~/.nvm` 并 source。显式切回 `npm_registry=official` 前应清除 `NVM_SOURCE`、`NVM_NODEJS_ORG_MIRROR`、`NVM_INSTALLER_TAG`、`NVM_EXPECTED_COMMIT`；自定义 nvm 镜像或版本时必须同步提供匹配的 `NVM_EXPECTED_COMMIT`。
 
 ---
 
@@ -184,7 +186,7 @@ claude   # 登录
 hostname="${hostname:-}"
 timezone="${timezone-Asia/Shanghai}"
 node_version="${node_version:-lts}"
-npm_registry="${npm_registry:-official}"
+npm_registry="${npm_registry:-china}"
 claude_install_method="${claude_install_method:-auto}"
 claude_version="${claude_version:-}"
 install_zsh="${install_zsh:-true}"

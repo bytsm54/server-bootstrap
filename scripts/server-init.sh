@@ -17,7 +17,7 @@ Usage: server-init.sh [options]
   --install-zsh yes|no                 安装 zsh（默认 yes）
   --zsh-theme <theme>                  zsh 主题
   --node-version <lts-or-version>      Node.js 版本（默认 lts）
-  --npm-registry official|china        npm registry（默认 official）
+  --npm-registry official|china        下载源配置（默认 china；official 仅作故障回退）
   --install-bun yes|no                 安装 Bun（默认 no）
   --git-name <name>                    Git user.name（必填）
   --git-email <email>                  Git user.email（必填）
@@ -179,7 +179,7 @@ TIMEZONE="Asia/Shanghai"
 INSTALL_ZSH="yes"
 ZSH_THEME="powerlevel10k/powerlevel10k"
 NODE_VERSION="lts"
-NPM_REGISTRY="official"
+NPM_REGISTRY="china"
 INSTALL_BUN="no"
 GIT_NAME=""
 GIT_EMAIL=""
@@ -196,7 +196,6 @@ TIMEZONE_SET=0
 INSTALL_ZSH_SET=0
 ZSH_THEME_SET=0
 NODE_VERSION_SET=0
-NPM_REGISTRY_SET=0
 INSTALL_BUN_SET=0
 GIT_NAME_SET=0
 GIT_EMAIL_SET=0
@@ -221,7 +220,7 @@ while [ "$#" -gt 0 ]; do
     --node-version)
       require_value "$@"; NODE_VERSION="$2"; NODE_VERSION_SET=1; shift 2 ;;
     --npm-registry)
-      require_value "$@"; NPM_REGISTRY="$2"; NPM_REGISTRY_SET=1; shift 2 ;;
+      require_value "$@"; NPM_REGISTRY="$2"; shift 2 ;;
     --install-bun)
       require_value "$@"; INSTALL_BUN="$2"; INSTALL_BUN_SET=1; shift 2 ;;
     --git-name)
@@ -281,10 +280,6 @@ if [ "$INTERACTIVE" -eq 1 ]; then
   if [ "$NODE_VERSION_SET" -eq 0 ]; then
     prompt_value "Node.js 版本" "$NODE_VERSION"
     NODE_VERSION="$PROMPT_RESULT"
-  fi
-  if [ "$NPM_REGISTRY_SET" -eq 0 ]; then
-    prompt_value "npm registry (official/china)" "$NPM_REGISTRY"
-    NPM_REGISTRY="$PROMPT_RESULT"
   fi
   if [ "$INSTALL_BUN_SET" -eq 0 ]; then
     prompt_value "安装 Bun (yes/no)" "$INSTALL_BUN"

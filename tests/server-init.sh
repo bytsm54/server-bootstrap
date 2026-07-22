@@ -286,9 +286,20 @@ grep -Fq '确认' "$OUTPUT" || fail "noninteractive confirmation error is unclea
 [ ! -s "$CALL_LOG" ] || fail "noninteractive confirmation failure invoked phases"
 INTERACTIVE=yes
 
+# The domestic npm profile is fixed by default and must not consume an interactive answer.
+write_input 'yes'
+run_server_init \
+  --hostname '' --timezone UTC \
+  --install-zsh no --node-version lts --install-bun no \
+  --git-name 'Test User' --git-email test@example.com \
+  --harden-ssh no --enable-fail2ban no
+assert_status 0
+assert_log_contains '03-node.sh --node-version lts --npm-registry china --install-bun no'
+! grep -Fq 'npm registry (official/china)' "$OUTPUT" || fail "default flow still prompts for npm registry"
+
 # Default interactive collection, overall approval, and successful SSH confirmation.
 write_input \
-  '' '' '' '' '' '' '' \
+  '' '' '' '' '' '' \
   'Test User' 'test@example.com' \
   '' '' '' '' '' '' '' \
   'yes' '已准备' '成功'
@@ -299,7 +310,7 @@ assert_log_equals "$(cat <<'EOF'
 02-base-deps.sh
 02a-system.sh --timezone Asia/Shanghai
 02b-zsh.sh --theme powerlevel10k/powerlevel10k
-03-node.sh --node-version lts --npm-registry official --install-bun no
+03-node.sh --node-version lts --npm-registry china --install-bun no
 05-git-identity.sh --name Test User --email test@example.com
 08-ssh-harden.sh apply --port 22022 --allow-users tester --permit-root no --password-auth no --rollback-after-minutes 5
 08-ssh-harden.sh deadline

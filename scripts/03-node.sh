@@ -2,7 +2,7 @@
 # 03-node.sh — 安装 nvm 到 ~/.nvm 并通过它装 Node（用户态, 无 sudo）
 #
 # 用法：
-#   bash 03-node.sh [--node-version lts|<ver>] [--npm-registry official|china]
+#   bash 03-node.sh [--node-version lts|<ver>] [--npm-registry official|china] [--install-bun yes|no]
 #
 # 幂等：
 #   - nvm 已装 → 跳过 nvm 安装, 仅按需切版本
@@ -24,20 +24,27 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 NODE_VERSION="lts"
 NPM_REGISTRY="official"
+INSTALL_BUN="yes"
 NVM_INSTALLER_TAG="${NVM_INSTALLER_TAG:-v0.40.3}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --node-version) NODE_VERSION="$2"; shift 2 ;;
     --npm-registry) NPM_REGISTRY="$2"; shift 2 ;;
+    --install-bun) INSTALL_BUN="$2"; shift 2 ;;
     -h|--help)
-      echo "Usage: $0 [--node-version lts|<ver>] [--npm-registry official|china]"
+      echo "Usage: $0 [--node-version lts|<ver>] [--npm-registry official|china] [--install-bun yes|no]"
       exit 0
       ;;
     *)
       err "未知参数: $1"; exit 2 ;;
   esac
 done
+
+case "$INSTALL_BUN" in
+  yes|no) ;;
+  *) err "--install-bun 必须是 yes 或 no"; exit 2 ;;
+esac
 
 export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 
@@ -111,19 +118,21 @@ ok "registry: $(npm config get registry)"
 
 # --- 4. bun（用户态, claude-mem 等 plugin 的 SessionStart hook 依赖）
 # 装到 ~/.bun/bin/bun, 不需要 sudo。
-if [ -x "$HOME/.bun/bin/bun" ]; then
-  ok "bun: $("$HOME/.bun/bin/bun" --version) (已装)"
-else
-  log "装 bun (用户态)"
-  if ! curl -fsSL https://bun.sh/install | bash; then
-    err "bun 安装失败"
-    exit 1
+if [ "$INSTALL_BUN" = "yes" ]; then
+  if [ -x "$HOME/.bun/bin/bun" ]; then
+    ok "bun: $("$HOME/.bun/bin/bun" --version) (已装)"
+  else
+    log "装 bun (用户态)"
+    if ! curl -fsSL https://bun.sh/install | bash; then
+      err "bun 安装失败"
+      exit 1
+    fi
+    if [ ! -x "$HOME/.bun/bin/bun" ]; then
+      err "bun installer 跑完但 ~/.bun/bin/bun 不存在"
+      exit 1
+    fi
+    ok "bun: $("$HOME/.bun/bin/bun" --version)"
   fi
-  if [ ! -x "$HOME/.bun/bin/bun" ]; then
-    err "bun installer 跑完但 ~/.bun/bin/bun 不存在"
-    exit 1
-  fi
-  ok "bun: $("$HOME/.bun/bin/bun" --version)"
 fi
 
 # 管理 PATH / 加载行 注入到 rc 文件, 用 marker 块保证幂等:
@@ -142,13 +151,15 @@ fi
 #   localbin-path → .bashrc / .zshrc
 #                   ~/.local/bin 是 Claude Code / Codex / RTK 等 CLI 落地路径; 追加到
 #                   PATH 末尾, 避免云镜像预置的 ~/.local/bin/node/npm/npx 盖过 nvm。
+export INSTALL_BUN
 log "管理 PATH 注入 (.bashrc / .zshrc / .zshenv)"
 python3 - <<'PY'
 import os, re
 HOME = os.environ['HOME']
 
-SPECS = [
-    {
+SPECS = []
+if os.environ['INSTALL_BUN'] == 'yes':
+    SPECS.append({
         'marker': '# server-bootstrap:bun-path (managed by 03-node.sh, do not edit)',
         'block': (
             'export BUN_INSTALL="$HOME/.bun"\n'
@@ -160,7 +171,9 @@ SPECS = [
             r'\n*# bun\nexport BUN_INSTALL=[^\n]*\nexport PATH=[^\n]*BUN_INSTALL[^\n]*\n',
             re.MULTILINE,
         ),
-    },
+    })
+
+SPECS.extend([
     {
         'marker': '# server-bootstrap:nvm-load (managed by 03-node.sh, do not edit)',
         'block': (
@@ -179,18 +192,20 @@ SPECS = [
         'targets': ('.bashrc', '.zshrc'),
         'cleanup_re': None,
     },
-]
+])
 
 def manage(path):
+    basename = os.path.basename(path)
+    active_specs = [spec for spec in SPECS if basename in spec['targets']]
+    if not active_specs:
+        return
     if not os.path.exists(path):
         open(path, 'a').close()
     with open(path) as f:
         content = f.read()
     original = content
     actions = []
-    for spec in SPECS:
-        if os.path.basename(path) not in spec['targets']:
-            continue
+    for spec in active_specs:
         if spec['cleanup_re'] is not None:
             content, removed = spec['cleanup_re'].subn('', content)
             if removed:
@@ -217,7 +232,7 @@ def manage(path):
     if content != original:
         with open(path, 'w') as f:
             f.write(content)
-    print(f'  ✅ {os.path.basename(path)}: ' + ' / '.join(actions))
+    print(f'  ✅ {basename}: ' + ' / '.join(actions))
 
 for rc in ('.bashrc', '.zshrc', '.zshenv'):
     manage(os.path.join(HOME, rc))

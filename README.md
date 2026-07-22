@@ -12,7 +12,42 @@
 
 ---
 
-## 在新服务器上的最小路径
+## 纯服务器初始化（不安装 AI 工具）
+
+如果只需要系统、zsh、Node.js、Git 身份、SSH 加固和 fail2ban，克隆仓库后运行独立入口：
+
+```bash
+git clone https://github.com/bytsm54/server-bootstrap.git ~/server-bootstrap
+bash ~/server-bootstrap/scripts/server-init.sh
+```
+
+该入口与下方 AI 开发环境流程相互独立，永远不会运行 phase 04、04a、04b、06、07 或 07a；因此不会安装 Claude Code、Codex、RTK、plugin、skill，也不会克隆项目或配置 memories。
+
+完整参数示例（仍会先展示配置并要求交互确认）：
+
+```bash
+bash ~/server-bootstrap/scripts/server-init.sh \
+  --hostname edge-host \
+  --timezone UTC \
+  --install-zsh yes \
+  --zsh-theme powerlevel10k/powerlevel10k \
+  --node-version 22 \
+  --npm-registry official \
+  --install-bun yes \
+  --git-name "Your Name" \
+  --git-email you@example.com \
+  --harden-ssh yes \
+  --ssh-port 22022 \
+  --ssh-allow-users "deploy,ops" \
+  --ssh-permit-root no \
+  --ssh-password-auth no \
+  --ssh-rollback-minutes 5 \
+  --enable-fail2ban yes
+```
+
+---
+
+## AI 开发环境的最小路径
 
 ```bash
 # 在新服务器 SSH 会话里跑这一行
@@ -40,6 +75,7 @@ server-bootstrap/
 ├── SKILL.md                     # Agent skill 入口（编排 + 参数 + 交互约定）
 ├── scripts/
 │   ├── bootstrap.sh             # 一键入口（curl | bash 用）
+│   ├── server-init.sh           # 纯服务器初始化入口（不安装 AI 工具或项目配置）
 │   ├── 01-preflight.sh          # OS / 网络 / sudo 检测
 │   ├── 02-base-deps.sh          # apt 依赖（含 at, 用于 phase 08 deadman）
 │   ├── 02a-system.sh            # 可选：hostname + timezone
@@ -54,6 +90,7 @@ server-bootstrap/
 │   ├── 07a-codex-skills.sh      # 自动：把 ~/.agents/skills 软链给 Codex 复用
 │   ├── 08-ssh-harden.sh         # 可选：SSH 加固（apply/confirm/rollback 三模式 + deadman）
 │   ├── 09-fail2ban.sh           # 可选：fail2ban sshd jail
+│   ├── verify-server.sh         # 纯服务器初始化检查 + 摘要
 │   ├── verify.sh                # 总检查 + 摘要
 │   └── lib/
 │       └── with-env.sh          # 包装：自动 source nvm + 加 PATH

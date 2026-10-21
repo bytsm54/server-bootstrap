@@ -16,7 +16,7 @@ Usage: server-init.sh [options]
   --zsh-theme <theme>               默认 robbyrussell
   --git-name <name> --git-email <email>  默认复用已有全局身份
   --harden-ssh yes|no               默认 yes
-  --ssh-port <1-65535>              用户自定义；留空保留当前端口
+  --ssh-port <1-65535>              默认 22022；空字符串保留当前端口
   --ssh-allow-users <user,...>       默认当前用户
   --ssh-permit-root yes|no          默认 no
   --ssh-password-auth yes|no        默认 no
@@ -63,7 +63,8 @@ if [ "$ASSUME_YES" != yes ] && [ "$STAGE" != verify ]; then
   prompt_option --git-email GIT_EMAIL 'Git user.email'
   prompt_option --harden-ssh HARDEN_SSH 'SSH 加固 (yes/no)'
   if [ "$HARDEN_SSH" = yes ]; then
-    prompt_option --ssh-port SSH_PORT 'SSH 端口（留空保持现状）'
+    prompt_option --ssh-port SSH_PORT 'SSH 端口（回车采用默认值，输入 keep 保持现状）'
+    [ "$SSH_PORT" != keep ] || SSH_PORT=''
     prompt_option --ssh-allow-users SSH_ALLOW_USERS 'SSH 允许用户（逗号分隔）'
   fi
   prompt_option --enable-fail2ban ENABLE_FAIL2BAN '启用 fail2ban (yes/no)'

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Shared defaults and validation. Sourcing this file does not change the host.
+DEFAULT_SSH_PORT=22022
 
 init_privilege() {
   SUDO=(env)
@@ -30,7 +31,7 @@ config_defaults() {
   INSTALL_NODE=no; NODE_VERSION=lts; NPM_REGISTRY=china; INSTALL_BUN=no
   GIT_NAME="$(git config --global user.name 2>/dev/null || true)"
   GIT_EMAIL="$(git config --global user.email 2>/dev/null || true)"
-  HARDEN_SSH=yes; SSH_PORT=''; SSH_ALLOW_USERS="${SUDO_USER:-$(id -un)}"
+  HARDEN_SSH=yes; SSH_PORT="$DEFAULT_SSH_PORT"; SSH_ALLOW_USERS="${SUDO_USER:-$(id -un)}"
   SSH_PERMIT_ROOT=no; SSH_PASSWORD_AUTH=no; SSH_ROLLBACK_MINUTES=5
   ENABLE_FAIL2BAN=yes; PROJECT_REPO=''; PROJECT_DIR=''; ENV_KEYS=''
   ASSUME_YES=no; SHOW_CONFIG=no; STAGE=all

@@ -84,11 +84,11 @@ class CommonTests(IsolatedCase):
     def common(self, body, *args):
         return self.shell('. "$1"; shift; ' + body, SCRIPTS / 'lib/common.sh', *args)
 
-    def test_defaults_preserve_hostname_and_port_and_optional_runtimes(self):
+    def test_defaults_preserve_hostname_and_set_port_and_optional_runtimes(self):
         result = self.good(self.common('config_defaults; printf "%s|%s|%s|%s|%s|%s|%s" '
                                       '"$HOSTNAME_VALUE" "$SSH_PORT" "$TIMEZONE" '
                                       '"$INSTALL_NODE" "$INSTALL_BUN" "$INSTALL_ZSH" "$PROJECT_REPO"'))
-        self.assertEqual(result.stdout, '||Asia/Shanghai|no|no|no|')
+        self.assertEqual(result.stdout, '|22022|Asia/Shanghai|no|no|no|')
 
     def test_port_bounds_and_decimal_leading_zero(self):
         for value in ('1', '22', '65535', '00022'):

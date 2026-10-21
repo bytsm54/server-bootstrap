@@ -74,7 +74,11 @@ elif name=='sha256sum':
 elif name=='dpkg-query': print('install ok installed',end='')
 elif name=='fail2ban-client':
     if read('f2b-fail'): sys.exit(1)
+    # fail2ban 1.1 drops a newly introduced action on plain reload.
+    if a==['reload']: write('f2b-action','missing')
+    elif a==['reload','--restart','sshd']: write('f2b-action','ready')
     if a[:2]==['get','sshd']:
+        if read('f2b-query-fail') or read('f2b-action')!='ready': sys.exit(1)
         f=p/'etc/fail2ban/jail.d/99-server-bootstrap.local'
         print(next(x.split('=',1)[1].strip() for x in f.read_text().splitlines() if x.startswith('port =')))
 else: raise RuntimeError(name)
@@ -181,5 +185,14 @@ class SSH(unittest.TestCase):
         self.apply('2200');self.run_script(script='09-fail2ban.sh',success=False)
         self.run_script('confirm');self.run_script(script='09-fail2ban.sh')
         self.assertIn('port = 2200',(self.p/'etc/fail2ban/jail.d/99-server-bootstrap.local').read_text())
+    def test_fail2ban_query_failure_restores_existing_config_once(self):
+        jail=self.p/'etc/fail2ban/jail.d/99-server-bootstrap.local'
+        jail.parent.mkdir(parents=True)
+        jail.write_text('existing configuration\n')
+        (self.p/'f2b-query-fail').write_text('1')
+        result=self.run_script(script='09-fail2ban.sh',success=False)
+        self.assertEqual(jail.read_text(),'existing configuration\n')
+        self.assertEqual(result.stderr.count('已恢复先前配置'),1)
+        self.assertNotIn('cannot stat',result.stderr)
 
 if __name__=='__main__': unittest.main()

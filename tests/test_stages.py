@@ -32,9 +32,23 @@ if [ "${1:-}" = deadline ]; then echo "$DEADLINE"; fi''',directory=self.phases)
         self.assertIn('02a-system.sh <--hostname> <>',trace)
         self.assertIn('<--harden-ssh> <no>',trace)
     def test_new_connection_confirmation_and_actual_port_handoff(self):
-        self.good(self.init('--ssh-port','4444',input='已准备\n成功\n'))
-        trace=self.trace();self.assertIn('08-ssh-harden.sh <confirm>',trace)
-        self.assertIn('09-fail2ban.sh <>',trace); self.assertNotIn('09-fail2ban.sh <--ssh-port>',trace)
+        for args,port in [((), '22022'), (('--ssh-port','4444'), '4444'), (('--ssh-port',''), '')]:
+            with self.subTest(args=args):
+                (self.base/'trace').write_text('')
+                self.good(self.init(*args,input='已准备\n成功\n'))
+                trace=self.trace();self.assertIn('08-ssh-harden.sh <confirm>',trace)
+                self.assertIn(f'08-ssh-harden.sh <apply> <--port> <{port}>',trace)
+                self.assertIn('09-fail2ban.sh <>',trace); self.assertNotIn('09-fail2ban.sh <--ssh-port>',trace)
+    def test_interactive_port_default_custom_and_keep(self):
+        for answer,port in [('', '22022'), ('4444', '4444'), ('keep', '')]:
+            with self.subTest(answer=answer):
+                (self.base/'trace').write_text('')
+                self.good(self.run_cmd(BASH,SCRIPTS/'server-init.sh',
+                    '--hostname','','--timezone','','--install-node','no','--install-bun','no',
+                    '--install-zsh','no','--git-name','Tester','--git-email','test@example.invalid',
+                    '--harden-ssh','yes','--ssh-allow-users','tester','--enable-fail2ban','yes',
+                    input=answer+'\nyes\n已准备\n成功\n'))
+                self.assertIn(f'08-ssh-harden.sh <apply> <--port> <{port}>',self.trace())
     def test_timeout_or_failed_connection_rolls_back_and_returns_failure(self):
         for deadline,answer in [('2000000010','成功'),('2000000300','失败')]:
             self.env['DEADLINE']=deadline

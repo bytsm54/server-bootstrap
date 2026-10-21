@@ -21,7 +21,8 @@ description: 由 AI Agent 通过对话完成 Ubuntu 服务器初始化：探测�
 
 | 项目 | 行为 |
 |---|---|
-| 主机名、SSH 端口 | 用户自定义，留空保持现状；不替用户选择固定 SSH 端口 |
+| 主机名 | 用户自定义，留空保持现状 |
+| SSH 端口 | 默认 `22022`，可自定义；用户明确选择保持现状时传空字符串 |
 | 时区 | 默认 `Asia/Shanghai`，可自定义或保持现状（空字符串） |
 | 管理账号 | 复用普通 sudo 用户，SSH 允许用户名可用逗号分隔 |
 | Git 身份 | 复用已有 `user.name` / `user.email`，仅缺失时询问 |
@@ -32,7 +33,7 @@ description: 由 AI Agent 通过对话完成 Ubuntu 服务器初始化：探测�
 
 开场可这样表达，按已知信息省略问题：
 
-> 我会保留现有主机名和 SSH 端口，时区默认设为 Asia/Shanghai，复用已有 Git 身份，并配置 SSH 公钥登录与 fail2ban。主机名、SSH 端口或时区需要调整吗？Node、Bun、zsh 和项目准备默认跳过，需要的可以一起告诉我。
+> 我会保留现有主机名，SSH 端口默认设为 22022，时区默认设为 Asia/Shanghai，复用已有 Git 身份，并启用 SSH 加固与 fail2ban。需要调整这些参数或保留当前 SSH 端口吗？Node、Bun、zsh 和项目准备默认跳过，需要的可以一起告诉我。
 
 仅有 root 时，引导用户确定普通管理账号并创建、加入 sudo 组、配置公钥；已有授权和工具能力时由你执行这些准备操作。先取得该账号的新连接与 sudo 验证结果，再关闭 root 登录。用户态工具和 Git 配置应落到选定管理账号的 HOME 下，不要整套套用 sudo 写入 root 的 HOME。
 
@@ -61,7 +62,7 @@ description: 由 AI Agent 通过对话完成 Ubuntu 服务器初始化：探测�
 
 ## SSH 连接验证与恢复
 
-1. 读取并展示当前实际端口、目标端口或“保持现状”、允许账号和认证设置。可在目标上用 `scripts/lib/common.sh` 的 `init_privilege` 配合 `scripts/lib/ssh-state.sh` 的 `ssh_actual_ports` 获取端口；不能猜测默认端口。
+1. 读取并展示当前实际端口、目标端口或“保持现状”、允许账号和认证设置。可在目标上用 `scripts/lib/common.sh` 的 `init_privilege` 配合 `scripts/lib/ssh-state.sh` 的 `ssh_actual_ports` 获取端口；不能用默认目标端口推测当前监听。
 2. 修改前验证普通管理账号的公钥登录和 sudo。修改端口时完成主机防火墙与外部访问规则的放行准备：你可直接处理已有工具权限覆盖的部分，其余由用户完成并确认。已有明确验证结果可复用。
 3. 保持原会话，由你执行：
 
@@ -81,7 +82,7 @@ description: 由 AI Agent 通过对话完成 Ubuntu 服务器初始化：探测�
      -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no \
      -p <实际端口> <账号>@<服务器>
    ```
-   新连接中核对 `whoami` 是目标管理账号，再执行 `sudo -v` 和 `sudo -n id -u`；后者成功输出 `0` 才证明 sudo 可用。仅登录成功不算完成这两项验证。
+   新连接中核对 `whoami` 是目标管理账号，再执行 `sudo -n id -u`，成功输出 `0` 即证明 sudo 可用。仅在该命令因需要密码认证而失败时，在同一连接的交互终端中完成 `sudo -v`，然后重试 `sudo -n id -u`；不要将免密账号的 `sudo -v` 失败当成无法提权。仅登录成功不算完成账号与 sudo 验证。
 5. 得到新连接成功的证据且未超时，由你执行 `bash scripts/08-ssh-harden.sh confirm`。失败立即执行 `rollback`；临近截止仍无证据时也回滚，不接受过期确认。若对话暂停或原会话中断，已安排的 `at` 任务负责超时恢复；继续工作前检查实际状态。不得用旧会话仍在线或本地监听成功代替连接验证。
 6. 确认或回滚完成后，按选择执行 fail2ban。它使用验证后的实际监听端口，不能手工传入推测值。回滚只代表恢复了原状态，本次请求的 SSH 调整仍应标为未完成。
 

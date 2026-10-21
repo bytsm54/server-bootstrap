@@ -4,6 +4,7 @@
 # 四种模式（必须明确传一个）：
 #
 #   apply    [--port <N>] --allow-users <u1[,u2,...]>
+#            --port 默认 22022；显式传空字符串保持当前端口
 #            [--permit-root no|yes]                    (默认 no)
 #            [--password-auth no|yes]                   (默认 no)
 #            [--rollback-after-minutes <N>]             (默认 5)
@@ -109,7 +110,7 @@ deadman_record_exists() {
 }
 
 read_deadman_job_id() {
-  "${SUDO[@]}" cat "$DEADMAN_FILE" 2>/dev/null | head -1
+  "${SUDO[@]}" sed -n '1p' "$DEADMAN_FILE" 2>/dev/null
 }
 
 read_deadman_backup_file() {
@@ -408,7 +409,7 @@ fi
 # ---------------------------------------------------------------------------
 # APPLY
 # ---------------------------------------------------------------------------
-PORT=""
+PORT="$DEFAULT_SSH_PORT"
 ALLOW_USERS=""
 PERMIT_ROOT="no"
 PASSWORD_AUTH="no"
@@ -551,7 +552,7 @@ if [ "$USE_DEADMAN" -eq 1 ]; then
     err "at 调度失败：$AT_OUT"
     exit 1
   fi
-  JOB_ID="$(echo "$AT_OUT" | sed -nE 's/^job ([0-9]+).*/\1/p' | head -1)"
+  JOB_ID="$(printf '%s\n' "$AT_OUT" | sed -nE 's/^job ([0-9]+).*/\1/p')"
   if [ -z "$JOB_ID" ]; then
     err "at 调度结果无法解析 job ID：$AT_OUT"
     exit 1
@@ -600,9 +601,9 @@ trap 'apply_failure_handler $?' ERR
 TARGET="$SSHD_DROPIN_DIR/$DROPIN_NAME"
 TEMP_MAIN="$(mktemp)"
 trap 'rm -f "$TEMP_MAIN"' EXIT
-awk -v include="Include $TARGET" '
-  BEGIN {print include}
-  $0==include {next}
+awk -v managed_include="Include $TARGET" '
+  BEGIN {print managed_include}
+  $0==managed_include {next}
   tolower($1)=="match" {in_match=1}
   !in_match && (tolower($1)=="port" || tolower($1)=="allowusers") {print "# server-bootstrap superseded: " $0; next}
   {print}

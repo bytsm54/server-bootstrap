@@ -8,11 +8,19 @@ Agent 在对话中收集参数，再调用阶段脚本，按 [Skill 流程](../S
 
 独立终端方式下，`curl | bash` 的标准输入是脚本内容，入口会打开 `/dev/tty` 收集参数。`--yes` 不能代替 SSH 第二连接验证，`--stage prepare` 成功也不表示完整初始化已结束。
 
+## Agent 的命令沙箱启动失败
+
+若连 `id` 都在执行前出现 `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`，先排查执行器环境，不能判为本项目阶段脚本失败。在权限策略允许时，通过正常审批运行只读诊断，确认 Ubuntu 版本、`bubblewrap` 安装情况及内核 AppArmor 拒绝日志。
+
+缺少系统版 `bubblewrap` 时，执行器的内置副本可能不匹配 Ubuntu 已加载的 AppArmor profile。经授权修复执行环境时，优先使用 Ubuntu 软件包和对应 profile，再验证原沙箱中的命令执行；不要默认关闭全局 AppArmor 限制。执行器修复不属于本 Skill 的默认初始化步骤。
+
 ## Ubuntu、systemd 或 sudo 检查失败
 
 只支持运行 systemd 的 Ubuntu。普通容器、未启动 systemd 的环境不会通过预检。
 
 root 执行系统阶段时不需要 sudo；普通用户需要可用 sudo。仅有 root 账号时，先创建普通管理账号并加入 sudo 组，为它配置公钥，从新终端验证登录和 sudo，再继续。不要把整套用户态安装命令套在 `sudo` 下，否则配置可能写进 root 的主目录。
+
+在 Agent 沙箱中无法访问 systemd 总线或执行 sudo，并不代表宿主机缺少相应能力；在权限策略允许时，通过正常审批重新检查。对于已有免密 sudo 的账号，以 `sudo -n id -u` 成功输出 `0` 验证提权能力；`sudo -v` 可能仍要求密码，不应单独作为失败依据。确实需要密码时，在同一连接的交互终端中完成认证后重试，不将密码写入脚本或日志。
 
 ## Python venv 创建失败
 

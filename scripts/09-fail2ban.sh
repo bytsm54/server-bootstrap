@@ -49,7 +49,7 @@ restore_config() {
   trap - ERR
   if [ "$HAD_CONFIG" = yes ]; then "${SUDO[@]}" mv "$JAIL.bak" "$JAIL"
   else "${SUDO[@]}" rm -f "$JAIL"; fi
-  "${SUDO[@]}" fail2ban-client reload >/dev/null 2>&1 || true
+  "${SUDO[@]}" fail2ban-client reload --restart sshd >/dev/null 2>&1 || true
   echo 'fail2ban 配置失败，已恢复先前配置' >&2
   exit 1
 }
@@ -64,9 +64,11 @@ for attempt in 1 2 3 4 5; do
   sleep 1
 done
 [ "$ready" = yes ]
-"${SUDO[@]}" fail2ban-client reload
+# Recreate this jail when switching actions; fail2ban 1.1 can discard a newly
+# added action during a plain reload. Other jails and persisted bans stay intact.
+"${SUDO[@]}" fail2ban-client reload --restart sshd
 "${SUDO[@]}" fail2ban-client status sshd
-ACTUAL="$("${SUDO[@]}" fail2ban-client get sshd action iptables-multiport port | tr -d '[:space:]')"
+ACTUAL="$("${SUDO[@]}" fail2ban-client get sshd action iptables-multiport port | tr -d '[:space:]')" || restore_config
 [ "$ACTUAL" = "$SSH_PORTS" ]
 "${SUDO[@]}" systemctl is-active --quiet fail2ban
 "${SUDO[@]}" systemctl is-enabled --quiet fail2ban

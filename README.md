@@ -1,31 +1,35 @@
 # server-bootstrap
 
-通用 Ubuntu 服务器初始化 Skill，也可通过脚本独立运行。完成基础工具、主机名与时区、Git 身份、SSH 加固和 fail2ban 配置；Node、Bun、zsh 及项目准备按需启用。
+**在 AI Agent 会话中执行的 Ubuntu 服务器初始化 Skill。** 可由 Codex、Claude Code 等支持 Skill 的 Agent 加载：用户提出初始化需求，Agent 检查服务器、收集参数、调用阶段脚本完成配置、处理失败并验收。
 
-使用前先连接目标服务器；通过助手调用时，提前加载本 Skill。项目不保存服务器地址、私钥路径或连接记录，不安装助手工具及其他 Skills。仅支持运行 systemd 的 Ubuntu，不自动整机升级、重启或安装业务服务。
+覆盖基础工具、主机名、时区、Git 身份、SSH 加固和 fail2ban；Node、Bun、zsh 及项目准备按需启用。`SKILL.md` 是 Agent 的工作入口，`scripts/` 是它使用的执行工具。
 
-## 开始使用
+用户提前完成目标服务器连接和本 Skill 的加载。Agent 可以在服务器上运行，也可以通过会话已有的远程执行通道操作服务器。本项目不负责 AI Agent 的安装、登录或配置，不保存服务器地址、私钥路径和连接记录，不安装其他 Skills。仅支持运行 systemd 的 Ubuntu，不自动整机升级、重启或安装业务服务。
 
-建议用已有的普通 sudo 管理账号执行，脚本会在系统操作时调用 sudo。仅有 root 时，初始化入口会引导建立普通管理账号，先验证其公钥登录和 sudo，再继续关闭 root 登录。
+## 在 Agent 中使用
 
-在服务器终端中运行：
+加载本 Skill 后，在 Agent 会话里说：
 
-```bash
-git clone https://github.com/bytsm54/server-bootstrap.git ~/server-bootstrap
-bash ~/server-bootstrap/scripts/server-init.sh
-```
+> 执行 server-bootstrap，初始化当前连接的 Ubuntu 服务器。
 
-也可使用一行引导入口：
+也可以直接给出选择：
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/bytsm54/server-bootstrap/main/scripts/bootstrap.sh | bash
-```
+> 使用 server-bootstrap，主机名和 SSH 端口保持现状，时区设为 Asia/Shanghai，复用已有 Git 身份。安装 Node，Bun 和 zsh 不装，不克隆项目。
 
-引导入口只获取本项目并启动同一个初始化脚本；缺少下载工具时安装 Git、curl 和 CA 证书。已有目录会核对 origin 并使用当前版本，不自动拉取代码。管道输入时，交互提示从 `/dev/tty` 读取。
+Agent 会按 [SKILL.md](SKILL.md) 完成以下工作：
 
-## 参数和默认值
+1. 检查目标系统、账号、权限及已有配置，在对话中一次询问尚缺的参数。
+2. 展示目标配置，按用户选择调用各阶段工具，处理安装或配置失败。
+3. 完成 SSH 修改前后的独立连接验证，在成功后确认，失败或超时回滚。
+4. 同步 fail2ban，执行完整验收并报告结果。
 
-**主机名、SSH 端口由用户填写，留空保持现状。SSH 端口没有预设值。**
+普通配置由 Agent 执行。用户主要提供选择和缺少的信息；需要用户客户端建立第二个 SSH 连接时，Agent 会给出具体验证方式，并根据结果继续操作。
+
+建议使用已有的普通 sudo 管理账号。仅有 root 时，Agent 先协助准备普通管理账号，验证其公钥登录和 sudo，再继续关闭 root 登录。
+
+## 对话中可选择的配置
+
+**主机名、SSH 端口由用户自定义，留空保持现状。SSH 端口没有预设值。** 下表同时列出对应脚本参数，供 Agent 调用或独立运行时使用；在对话中直接描述选择即可。
 
 | 参数 | 默认行为 |
 |---|---|
@@ -49,6 +53,33 @@ curl -fsSL https://raw.githubusercontent.com/bytsm54/server-bootstrap/main/scrip
 | `--project-dir` | 提供仓库后默认为 `~/<仓库名>` |
 | `--env-keys` | 空；可传逗号分隔的环境变量名，只创建缺失的 `.env` 占位文件 |
 
+## SSH 修改流程
+
+1. 展示当前与目标配置；先在另一终端验证允许账号的公钥登录和 sudo。修改端口时，先在实际使用的主机防火墙与外部访问规则中放行目标端口。
+2. 检查端口范围和监听归属。填写当前 SSH 端口合法；其他服务或 SSH 转发占用的端口会被拒绝。
+3. 备份配置，启用并记录 `at` 自动回滚任务，再写配置。执行语法检查、生效配置检查和实际监听检查；检测失败立即回滚。
+4. 保持原会话，建立第二个新连接验证。验证时禁用 ControlMaster 连接复用并强制公钥认证（具体选项见 Skill）；成功后确认并取消回滚；失败或超时恢复原配置，并核对恢复后的监听。
+5. SSH 状态确认后配置 fail2ban。它读取实际端口，验证配置、服务、自启和 sshd jail 的运行参数。
+
+SSH 阶段使用并发锁；未确认的修改必须先确认或回滚，不能重复覆盖。普通服务使用 reload；Ubuntu socket activation 会检测实际 SSH socket，调整端口时保留其监听地址，并检查主服务的 `KillMode=process` 及对应 socket 依赖后重启 socket 同步监听、保留现有会话。自定义终止策略不满足要求时在修改前拒绝。脚本不代管云平台访问规则，也不将“本地监听成功”等同于“外部连接已成功”。
+
+## 独立脚本使用（可选）
+
+需要脱离 Agent 直接在终端初始化时，可使用独立入口；它复用 Skill 使用的默认值、校验和阶段脚本：
+
+```bash
+git clone https://github.com/bytsm54/server-bootstrap.git ~/server-bootstrap
+bash ~/server-bootstrap/scripts/server-init.sh
+```
+
+一行引导入口只获取本项目并启动上述初始化脚本：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bytsm54/server-bootstrap/main/scripts/bootstrap.sh | bash
+```
+
+缺少下载工具时，引导入口安装 Git、curl 和 CA 证书。已有目录会核对 origin 并使用当前版本，不自动拉取代码；管道输入时从 `/dev/tty` 读取交互输入。
+
 完整选项及只读配置预览：
 
 ```bash
@@ -66,32 +97,9 @@ bash ~/server-bootstrap/scripts/server-init.sh \
 
 `--yes` 表示已接受普通阶段参数，不会跳过 SSH 公钥验证、端口放行准备和第二连接确认。
 
-## SSH 修改流程
+`--stage prepare --yes` 只执行普通阶段，`--stage verify` 只做验收。Agent 默认按 Skill 分阶段编排，也可批量调用普通阶段，再继续完成 SSH、fail2ban 和完整验收。`prepare` 成功不代表整个初始化完成。
 
-1. 展示当前与目标配置；先在另一终端验证允许账号的公钥登录和 sudo。修改端口时，先在实际使用的主机防火墙与外部访问规则中放行目标端口。
-2. 检查端口范围和监听归属。填写当前 SSH 端口合法；其他服务或 SSH 转发占用的端口会被拒绝。
-3. 备份配置，启用并记录 `at` 自动回滚任务，再写配置。执行语法检查、生效配置检查和实际监听检查；检测失败立即回滚。
-4. 保持原会话，建立第二个新连接验证。验证时禁用 ControlMaster 连接复用并强制公钥认证（具体选项见 Skill）；成功后确认并取消回滚；失败或超时恢复原配置，并核对恢复后的监听。
-5. SSH 状态确认后配置 fail2ban。它读取实际端口，验证配置、服务、自启和 sshd jail 的运行参数。
-
-SSH 阶段使用并发锁；未确认的修改必须先确认或回滚，不能重复覆盖。普通服务使用 reload；Ubuntu socket activation 会检测实际 SSH socket，调整端口时保留其监听地址，并检查主服务的 `KillMode=process` 及对应 socket 依赖后重启 socket 同步监听、保留现有会话。自定义终止策略不满足要求时在修改前拒绝。脚本不代管云平台访问规则，也不将“本地监听成功”等同于“外部连接已成功”。
-
-## 分阶段使用
-
-交互终端可直接运行完整入口。助手或无交互执行器先完成普通阶段：
-
-```bash
-bash ~/server-bootstrap/scripts/server-init.sh --stage prepare --yes \
-  --git-name 'Your Name' --git-email you@example.com
-```
-
-此命令不执行 SSH 和 fail2ban；其结果只表示普通阶段完成。按 [SKILL.md](SKILL.md) 的 SSH 流程完成剩余阶段后，再用相同目标参数验收：
-
-```bash
-bash ~/server-bootstrap/scripts/server-init.sh --stage verify
-```
-
-自定义过主机名、SSH 端口、可选运行环境等配置时，验收命令应携带同样的参数。验收分为“成功、跳过、失败、未验证”；失败或必需证据未验证时返回非零。`scripts/verify.sh` 是同一个验收实现的兼容入口。
+验收使用与请求一致的目标参数，区分“成功、跳过、失败、未验证”；失败或必需证据未验证时返回非零。`scripts/verify.sh` 是同一验收实现的兼容入口。
 
 ## 配置与项目保护
 
@@ -105,8 +113,9 @@ bash ~/server-bootstrap/scripts/server-init.sh --stage verify
 
 | 文件 | 用途 |
 |---|---|
-| `scripts/bootstrap.sh` | 获取项目并启动初始化 |
-| `scripts/server-init.sh` | 统一参数、交互与阶段编排 |
+| `SKILL.md` | Agent 主入口：对话、阶段编排、恢复与验收 |
+| `scripts/bootstrap.sh` | 可选终端引导入口 |
+| `scripts/server-init.sh` | 独立终端入口；共享参数、批量阶段与验收接口 |
 | `scripts/01-preflight.sh` | Ubuntu、systemd 与权限检查 |
 | `scripts/02-base-deps.sh` | 按需安装基础包并建立专用 venv |
 | `scripts/02a-system.sh` | 主机名、时区 |

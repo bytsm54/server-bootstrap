@@ -2,11 +2,11 @@
 
 先保留失败输出和退出码，处理具体失败后重跑对应阶段。不要通过删除用户配置、工具或 SSH 恢复记录来绕过错误。
 
-## 没有交互终端
+## Agent 执行时没有交互终端
 
-`curl | bash` 的标准输入是脚本内容，入口会打开 `/dev/tty` 收集参数。无终端的执行器使用 `--stage prepare --yes` 并显式提供缺少的 Git 身份，再按 [Skill 流程](../SKILL.md) 单独完成 SSH 和 fail2ban。
+Agent 在对话中收集参数，再调用阶段脚本，按 [Skill 流程](../SKILL.md) 继续完成 SSH、fail2ban 和验收，不需要先把用户转到 Shell 里操作。普通阶段也可批量调用 `server-init.sh --stage prepare --yes`，并显式提供缺少的参数；不要在无交互执行器里启动完整入口等待 stdin。
 
-`--yes` 不能代替 SSH 第二连接验证。`--stage prepare` 成功也不表示完整初始化已结束。
+独立终端方式下，`curl | bash` 的标准输入是脚本内容，入口会打开 `/dev/tty` 收集参数。`--yes` 不能代替 SSH 第二连接验证，`--stage prepare` 成功也不表示完整初始化已结束。
 
 ## Ubuntu、systemd 或 sudo 检查失败
 

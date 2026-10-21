@@ -3,11 +3,10 @@
 #
 # 四种模式（必须明确传一个）：
 #
-#   apply    --port <N> --allow-users <u1[,u2,...]>
+#   apply    [--port <N>] --allow-users <u1[,u2,...]>
 #            [--permit-root no|yes]                    (默认 no)
 #            [--password-auth no|yes]                   (默认 no)
 #            [--rollback-after-minutes <N>]             (默认 5)
-#            [--no-deadman]                             (跳过自动回滚, 不推荐)
 #     备份 + 调度/记录 deadman + 写新配置 + sshd -t + reload
 #
 #   confirm
@@ -23,16 +22,26 @@
 # 安全约束（脚本内强制）：
 #   - 修改 sshd_config 前 tar 备份整个 /etc/ssh
 #   - 禁用 password 前必须确认 allow_users 都有 authorized_keys
-#   - 永远 systemctl reload sshd（不是 restart）, 以保活当前 SSH 会话
+#   - 普通服务 reload；socket 重启前校验 KillMode=process，保留当前会话
 #   - 修改通过 drop-in /etc/ssh/sshd_config.d/00-server-bootstrap.conf
-#     （除非系统 sshd_config 没有 Include 指令, 则直接 patch 主文件）
+#     （在主文件全局作用域首部加载；保留其他设置）
 #
 # Agent 调用约束（见 SKILL.md phase 08 dialog）：
-#   apply 之前必须先把警告对话念给用户, 等用户"已准备"才能调
+#   apply 前展示目标配置，并确认允许账号已验证公钥登录
 #   apply 之后必须让用户在另一终端验证
 #   验证 OK → confirm；失败或超时 → 自动 rollback
 
-set -euo pipefail
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/lib/common.sh"
+. "$SCRIPT_DIR/lib/ssh-state.sh"
+
+case "${1:-}" in
+  -h|--help|'')
+    echo 'Usage: 08-ssh-harden.sh apply [--port N] --allow-users user,... | confirm | rollback | deadline'
+    exit 0 ;;
+esac
 
 ORIGINAL_ARGS=("$@")
 
@@ -48,7 +57,7 @@ BACKUP_DIR=/var/backups/sshd-bootstrap
 DEADMAN_FILE=/var/run/sshd-bootstrap-deadman.atjob
 LOCK_FILE="${SSH_HARDEN_LOCK_FILE:-/var/run/sshd-bootstrap.lock}"
 
-# Ubuntu 22.04+ / Debian 12+ 用 systemd socket activation 持有 listening fd,
+# Ubuntu 的 systemd socket activation 可以持有 listening fd,
 # sshd_config 的 Port 指令会被旁路。此函数返回当前 active 的 socket 单元名。
 detect_socket_unit() {
   for unit in ssh.socket sshd.socket; do
@@ -62,7 +71,7 @@ detect_socket_unit() {
 
 socket_override_path() {
   local unit="$1"
-  echo "/etc/systemd/system/${unit}.d/override.conf"
+  echo "/etc/systemd/system/${unit}.d/99-server-bootstrap.conf"
 }
 
 # --- sudo 包装
@@ -73,7 +82,7 @@ if [ "$(id -u)" -ne 0 ]; then
   fi
   SUDO=(sudo)
 else
-  SUDO=()
+  SUDO=(env)
 fi
 
 # Elevate once so the process can open the host-local lock file. The marker may
@@ -82,6 +91,7 @@ if [ "$(id -u)" -ne 0 ] && [ "${SSH_HARDEN_ELEVATED:-0}" != 1 ]; then
   exec "${SUDO[@]}" /usr/bin/env \
     SSH_HARDEN_ELEVATED=1 \
     SSH_HARDEN_LOCK_FILE="$LOCK_FILE" \
+    SSH_CONNECTION="${SSH_CONNECTION:-}" \
     bash "$0" "${ORIGINAL_ARGS[@]}"
 fi
 if ! command -v flock >/dev/null 2>&1; then
@@ -159,12 +169,23 @@ restore_ssh_backup() {
   local socket_override=""
   local relative_path=""
 
+  # A failed socket restart can leave the unit inactive. Use the backed-up
+  # identity rather than detecting only currently active sockets during recovery.
+  if "${SUDO[@]}" test -f "$backup_file.socket-unit"; then
+    SOCKET_UNIT="$("${SUDO[@]}" cat "$backup_file.socket-unit")"
+  fi
+
   if ! "${SUDO[@]}" rm -f "$SSHD_DROPIN_DIR/$DROPIN_NAME"; then
     err "无法移除 SSH drop-in"
     return 1
   fi
   if ! "${SUDO[@]}" tar xzf "$backup_file" -C /; then
     err "无法恢复 SSH 备份 $backup_file"
+    return 1
+  fi
+
+  if ! "${SUDO[@]}" sshd -t; then
+    err '恢复的 SSH 配置未通过语法检查；保留当前会话'
     return 1
   fi
 
@@ -195,11 +216,26 @@ restore_ssh_backup() {
     err "请人工 ssh 进去（旧端口的会话还活着）查 $SSHD_MAIN"
     return 1
   fi
-  if ! "${SUDO[@]}" systemctl reload ssh 2>/dev/null &&
-     ! "${SUDO[@]}" systemctl reload sshd 2>/dev/null; then
+  if ! ssh_reload_daemon; then
     err "reload sshd 失败"
     return 1
   fi
+  local expected_ports actual_ports attempt
+  if ! expected_ports="$("${SUDO[@]}" cat "$backup_file.ports")"; then
+    err '备份缺少原监听端口，无法确认回滚结果'; return 1
+  fi
+  for attempt in 1 2 3 4 5; do
+    actual_ports="$(ssh_actual_ports 2>/dev/null || true)"
+    if [ -n "$expected_ports" ] && [ "$actual_ports" = "$expected_ports" ]; then
+      "${SUDO[@]}" rm -f /var/lib/server-bootstrap/ssh-confirmed
+      if "${SUDO[@]}" test -f "$backup_file.confirmed"; then
+        "${SUDO[@]}" cp "$backup_file.confirmed" /var/lib/server-bootstrap/ssh-confirmed || return 1
+      fi
+      return 0
+    fi
+    sleep 1
+  done
+  err '回滚后实际 SSH 监听不符，保留恢复记录'; return 1
 }
 
 # 必须在 SUDO 定义之后才能用 systemctl 探测
@@ -251,11 +287,23 @@ if [ "$MODE" = "confirm" ]; then
     err "deadman 记录已不再由 apply 持有；拒绝确认"
     exit 1
   fi
+  CONFIRM_DEADLINE="$(read_deadman_deadline)"
+  if ! [[ "$CONFIRM_DEADLINE" =~ ^[0-9]+$ ]] || [ "$(date +%s)" -ge "$CONFIRM_DEADLINE" ]; then
+    err '确认窗口已结束，请等待或执行 rollback'; exit 1
+  fi
+  "${SUDO[@]}" sshd -t
+  CONFIRM_PORTS="$("${SUDO[@]}" awk 'tolower($1)=="port" {print $2}' "$SSHD_DROPIN_DIR/$DROPIN_NAME" | sort -nu | paste -sd, -)"
+  [ -n "$CONFIRM_PORTS" ] && [ "$(ssh_actual_ports)" = "$CONFIRM_PORTS" ] || {
+    err '确认时 SSH 实际监听已经变化，保留自动回滚'; exit 1;
+  }
+  "${SUDO[@]}" mkdir -p /var/lib/server-bootstrap
+  "${SUDO[@]}" sha256sum "$SSHD_MAIN" "$SSHD_DROPIN_DIR/$DROPIN_NAME" | "${SUDO[@]}" tee /var/lib/server-bootstrap/ssh-confirmed.tmp >/dev/null
   if [ -n "$JOB_ID" ]; then
     log "取消 at 任务 $JOB_ID"
     cancel_deadman_job "$JOB_ID" || exit 1
   fi
   "${SUDO[@]}" rm -f "$DEADMAN_FILE"
+  "${SUDO[@]}" mv /var/lib/server-bootstrap/ssh-confirmed.tmp /var/lib/server-bootstrap/ssh-confirmed
   ok "已确认成功, deadman 已取消"
   exit 0
 fi
@@ -332,29 +380,12 @@ if [ "$MODE" = "rollback" ]; then
     log "手动回滚到 $ROLLBACK_BACKUP"
   fi
 
-  CANCEL_FAILED=0
-  CANCEL_SUCCEEDED=0
-  if [ "$AUTO" -eq 0 ] &&
-     [ "$RECORDED_STATE" != manual-restore-failed ] &&
-     [ -n "$RECORDED_JOB" ]; then
-    log "回滚前取消 at 任务 $RECORDED_JOB"
-    if cancel_deadman_job "$RECORDED_JOB"; then
-      CANCEL_SUCCEEDED=1
-    else
-      CANCEL_FAILED=1
-    fi
-  fi
-
-  if [ "$CANCEL_SUCCEEDED" -eq 1 ]; then
-    [ -n "$RECORDED_DEADLINE" ] || RECORDED_DEADLINE=0
-    if ! write_deadman_record \
-      "$RECORDED_JOB" "$ROLLBACK_BACKUP" "$RECORDED_DEADLINE" manual-restore-failed; then
-      err "at 任务已取消，但无法持久化待恢复状态"
-      exit 1
-    fi
-  fi
-
+  # Keep the scheduled recovery armed until both files and listeners recover.
   restore_ssh_backup "$ROLLBACK_BACKUP" || exit 1
+  CANCEL_FAILED=0
+  if [ "$AUTO" -eq 0 ] && [ -n "$RECORDED_JOB" ]; then
+    if ! cancel_deadman_job "$RECORDED_JOB"; then CANCEL_FAILED=1; fi
+  fi
 
   if [ "$AUTO" -eq 1 ]; then
     "${SUDO[@]}" rm -f "$DEADMAN_FILE"
@@ -391,60 +422,60 @@ while [ $# -gt 0 ]; do
     --permit-root)              PERMIT_ROOT="$2"; shift 2 ;;
     --password-auth)            PASSWORD_AUTH="$2"; shift 2 ;;
     --rollback-after-minutes)   ROLLBACK_MIN="$2"; shift 2 ;;
-    --no-deadman)               USE_DEADMAN=0; shift ;;
     *) err "apply: 未知参数 $1"; exit 2 ;;
   esac
 done
 
-# --- 参数校验
-if [ -z "$PORT" ] || [ -z "$ALLOW_USERS" ]; then
-  err "apply 必须提供 --port 和 --allow-users"
-  exit 2
+# Validate before touching live configuration.
+valid_user_list "$ALLOW_USERS" || { err "--allow-users 必须为实际用户名，以逗号分隔"; exit 2; }
+[ -z "$PORT" ] || valid_port "$PORT" || { err "--port 必须为 1–65535 或留空"; exit 2; }
+valid_yes_no "$PERMIT_ROOT" && valid_yes_no "$PASSWORD_AUTH" || exit 2
+valid_positive_int "$ROLLBACK_MIN" || exit 2
+if [ "$PERMIT_ROOT" = no ] && [ "$ALLOW_USERS" = root ]; then root_account_guidance; exit 2; fi
+ORIGINAL_PORTS="$(ssh_actual_ports)"
+REQUESTED_PORT="$PORT"
+if [ -n "$PORT" ]; then
+  PORT="$((10#$PORT))"
+  ssh_port_available "$PORT" || exit 1
+  TARGET_PORTS="$PORT"
+else
+  TARGET_PORTS="$ORIGINAL_PORTS"
 fi
-if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1024 ] || [ "$PORT" -gt 65535 ]; then
-  err "--port 必须在 1024-65535（你给了 $PORT）"
-  exit 2
+SOCKET_ADDRESSES=''
+if [ -n "$SOCKET_UNIT" ]; then
+  SOCKET_ADDRESSES="$(ssh_socket_addresses "$SOCKET_UNIT")"
+  SERVICE_UNIT="${SOCKET_UNIT%.socket}.service"
+  KILL_MODE="$("${SUDO[@]}" systemctl show "$SERVICE_UNIT" --property=KillMode --value)"
+  [ "$KILL_MODE" = process ] || { err "$SERVICE_UNIT 的 KillMode 必须为 process 才能保留当前会话"; exit 1; }
+  REQUIRES="$("${SUDO[@]}" systemctl show "$SERVICE_UNIT" --property=Requires --value)"
+  case " $REQUIRES " in *" $SOCKET_UNIT "*) ;; *) err "$SERVICE_UNIT 缺少对 $SOCKET_UNIT 的 Requires 依赖"; exit 1 ;; esac
 fi
-if [ "$PORT" = "22" ]; then
-  err "拒绝把端口设为 22（这违背了改端口的目的）"
-  exit 2
-fi
-case "$PERMIT_ROOT"   in yes|no) ;; *) err "--permit-root 必须 yes 或 no";   exit 2 ;; esac
-case "$PASSWORD_AUTH" in yes|no) ;; *) err "--password-auth 必须 yes 或 no"; exit 2 ;; esac
-if ! [[ "$ROLLBACK_MIN" =~ ^[0-9]+$ ]] || [ "$ROLLBACK_MIN" -lt 1 ]; then
-  err "--rollback-after-minutes 必须正整数"
-  exit 2
-fi
-
-# --- 安全检查：禁用密码登录 → 确认 allow_users 都有 authorized_keys
-if [ "$PASSWORD_AUTH" = "no" ]; then
-  IFS=',' read -ra USERS <<< "$ALLOW_USERS"
-  for u in "${USERS[@]}"; do
-    u_trim="$(echo "$u" | xargs)"
-    [ -z "$u_trim" ] && continue
-    if [ "$u_trim" = "root" ]; then
-      AK="/root/.ssh/authorized_keys"
-    else
-      uhome="$(getent passwd "$u_trim" | cut -d: -f6)"
-      [ -z "$uhome" ] && { err "用户 $u_trim 不存在"; exit 1; }
-      AK="$uhome/.ssh/authorized_keys"
-    fi
-    if ! "${SUDO[@]}" test -s "$AK"; then
-      err "FATAL: 用户 $u_trim 的 $AK 不存在或为空"
-      err "禁用密码登录会立即把 $u_trim 锁出去, 拒绝执行"
-      err "解决：先把 ssh public key 写到 $AK, 或加 --password-auth yes"
-      exit 1
-    fi
-    ok "$u_trim 的 authorized_keys 已存在 ($AK)"
-  done
-fi
+IFS=',' read -r -a USERS <<< "$ALLOW_USERS"
+CLIENT_ADDR="${SSH_CONNECTION:-}"
+CLIENT_ADDR="${CLIENT_ADDR%% *}"
+CLIENT_ADDR="${CLIENT_ADDR:-127.0.0.1}"
+for user in "${USERS[@]}"; do
+  user_home="$(getent passwd "$user" | cut -d: -f6)"
+  [ -n "$user_home" ] || { err "用户不存在: $user"; exit 1; }
+  if [ "$PASSWORD_AUTH" = no ]; then
+    config="$(ssh_effective_config -C "user=$user,host=$CLIENT_ADDR,addr=$CLIENT_ADDR")"
+    key_files="$(printf '%s\n' "$config" | awk '$1=="authorizedkeysfile" {$1=""; print}')"
+    found_key=0
+    for key_file in $key_files; do
+      key_file="${key_file//%h/$user_home}"
+      key_file="${key_file//%u/$user}"
+      case "$key_file" in /*) ;; *) key_file="$user_home/$key_file" ;; esac
+      if "${SUDO[@]}" test -s "$key_file"; then found_key=1; break; fi
+    done
+    [ "$found_key" -eq 1 ] || { err "未找到 $user 的 authorized_keys；请先配置并验证公钥登录"; exit 1; }
+  fi
+done
 
 # --- deadman 前置：at 是否可用
 if [ "$USE_DEADMAN" -eq 1 ]; then
   if ! command -v at >/dev/null 2>&1; then
     err "需要 at(1) 做 deadman 自动回滚, 但未安装"
     err "解决：先跑 02-base-deps.sh（已含 at）, 或 sudo apt-get install -y at"
-    err "或者用 --no-deadman 强制跳过（不推荐）"
     exit 1
   fi
   if ! "${SUDO[@]}" systemctl is-active --quiet atd 2>/dev/null \
@@ -473,15 +504,15 @@ if deadman_record_exists; then
     log "清理已完成手动回滚的 harmless ownership 记录"
     "${SUDO[@]}" rm -f "$DEADMAN_FILE"
   else
-    log "取消上一次未确认的 at 任务 $PRIOR_JOB_ID"
-    cancel_deadman_job "$PRIOR_JOB_ID" || exit 1
-    "${SUDO[@]}" rm -f "$DEADMAN_FILE"
+    err "上一次 SSH 修改尚未确认，请先 confirm 或 rollback"
+    exit 1
   fi
 fi
 
 # --- 备份
 TS="$(date +%Y%m%d-%H%M%S)"
 "${SUDO[@]}" mkdir -p "$BACKUP_DIR"
+"${SUDO[@]}" chmod 700 "$BACKUP_DIR"
 BACKUP_FILE="$BACKUP_DIR/sshd-$TS-$$.tar.gz"
 log "备份 /etc/ssh（+socket override 如有）→ $BACKUP_FILE"
 BACKUP_PATHS=(etc/ssh/sshd_config)
@@ -489,6 +520,11 @@ BACKUP_PATHS=(etc/ssh/sshd_config)
 "${SUDO[@]}" test -d /etc/systemd/system/ssh.socket.d  && BACKUP_PATHS+=(etc/systemd/system/ssh.socket.d)
 "${SUDO[@]}" test -d /etc/systemd/system/sshd.socket.d && BACKUP_PATHS+=(etc/systemd/system/sshd.socket.d)
 "${SUDO[@]}" tar czf "$BACKUP_FILE" -C / "${BACKUP_PATHS[@]}"
+printf '%s\n' "$SOCKET_UNIT" | "${SUDO[@]}" tee "$BACKUP_FILE.socket-unit" >/dev/null
+printf '%s\n' "$ORIGINAL_PORTS" | "${SUDO[@]}" tee "$BACKUP_FILE.ports" >/dev/null
+if "${SUDO[@]}" test -f /var/lib/server-bootstrap/ssh-confirmed; then
+  "${SUDO[@]}" cp /var/lib/server-bootstrap/ssh-confirmed "$BACKUP_FILE.confirmed"
+fi
 ok "备份完成"
 
 # --- 在任何 live SSH mutation 之前调度并持久化 matching deadman
@@ -501,11 +537,17 @@ if [ "$USE_DEADMAN" -eq 1 ]; then
     exit 1
   fi
   AUTO_DEADLINE=$((ARMED_AT_EPOCH / 60 * 60 + 10#$ROLLBACK_MIN * 60))
-  printf -v ROLLBACK_SCRIPT_Q '%q' "$REPO_ROOT/scripts/08-ssh-harden.sh"
+  # Freeze the recovery implementation under a root-owned directory.
+  RECOVERY_DIR="$BACKUP_FILE.recovery"
+  "${SUDO[@]}" mkdir -p "$RECOVERY_DIR/lib"
+  "${SUDO[@]}" install -m 700 "$0" "$RECOVERY_DIR/08-ssh-harden.sh"
+  "${SUDO[@]}" install -m 600 "$SCRIPT_DIR/lib/common.sh" "$RECOVERY_DIR/lib/common.sh"
+  "${SUDO[@]}" install -m 600 "$SCRIPT_DIR/lib/ssh-state.sh" "$RECOVERY_DIR/lib/ssh-state.sh"
+  printf -v ROLLBACK_SCRIPT_Q '%q' "$RECOVERY_DIR/08-ssh-harden.sh"
   printf -v BACKUP_FILE_Q '%q' "$BACKUP_FILE"
   ROLLBACK_CMD="bash $ROLLBACK_SCRIPT_Q rollback --auto --backup-file $BACKUP_FILE_Q"
   log "调度 deadman: $ROLLBACK_MIN 分钟后自动回滚（除非你跑 confirm）"
-  if ! AT_OUT="$(echo "$ROLLBACK_CMD" | "${SUDO[@]}" at "now + $ROLLBACK_MIN minutes" 2>&1)"; then
+  if ! AT_OUT="$(echo "$ROLLBACK_CMD" | "${SUDO[@]}" env LC_ALL=C at "now + $ROLLBACK_MIN minutes" 2>&1)"; then
     err "at 调度失败：$AT_OUT"
     exit 1
   fi
@@ -550,124 +592,84 @@ apply_failure_handler() {
 
 # From this point onward, every failure must restore the backup paired above.
 trap 'apply_failure_handler $?' ERR
+"${SUDO[@]}" rm -f /var/lib/server-bootstrap/ssh-confirmed
 
-# --- 检测主 sshd_config 是否有 Include 指令
-USE_DROPIN=0
-if "${SUDO[@]}" grep -qE '^[[:space:]]*Include[[:space:]]+.*sshd_config\.d/\*\.conf' "$SSHD_MAIN" 2>/dev/null; then
-  USE_DROPIN=1
+# Always load the managed file in global scope before other settings. Port and
+# AllowUsers are additive; neutralize only global declarations in the main file.
+# Conflicting declarations in other includes/Match blocks are detected below.
+TARGET="$SSHD_DROPIN_DIR/$DROPIN_NAME"
+TEMP_MAIN="$(mktemp)"
+trap 'rm -f "$TEMP_MAIN"' EXIT
+awk -v include="Include $TARGET" '
+  BEGIN {print include}
+  $0==include {next}
+  tolower($1)=="match" {in_match=1}
+  !in_match && (tolower($1)=="port" || tolower($1)=="allowusers") {print "# server-bootstrap superseded: " $0; next}
+  {print}
+' "$SSHD_MAIN" > "$TEMP_MAIN"
+"${SUDO[@]}" install -m 600 "$TEMP_MAIN" "$SSHD_MAIN.server-bootstrap.tmp"
+"${SUDO[@]}" mv "$SSHD_MAIN.server-bootstrap.tmp" "$SSHD_MAIN"
+"${SUDO[@]}" mkdir -p "$SSHD_DROPIN_DIR"
+{
+  echo '# Managed by server-bootstrap'
+  printf '%s\n' "$TARGET_PORTS" | tr ',' '\n' | while read -r target_port; do printf 'Port %s\n' "$target_port"; done
+  printf 'PermitRootLogin %s\nPasswordAuthentication %s\nKbdInteractiveAuthentication %s\n' "$PERMIT_ROOT" "$PASSWORD_AUTH" "$PASSWORD_AUTH"
+  printf 'PubkeyAuthentication yes\nAllowUsers %s\nX11Forwarding no\n' "${ALLOW_USERS//,/ }"
+} | "${SUDO[@]}" tee "$TARGET.tmp" >/dev/null
+"${SUDO[@]}" chmod 644 "$TARGET.tmp"
+"${SUDO[@]}" mv "$TARGET.tmp" "$TARGET"
+"${SUDO[@]}" sshd -t
+for user in "${USERS[@]}"; do
+  effective="$(ssh_effective_config -C "user=$user,host=$CLIENT_ADDR,addr=$CLIENT_ADDR")"
+  for pair in "permitrootlogin:$PERMIT_ROOT" "passwordauthentication:$PASSWORD_AUTH" "kbdinteractiveauthentication:$PASSWORD_AUTH" 'pubkeyauthentication:yes'; do
+    key="${pair%%:*}"; wanted="${pair#*:}"
+    actual="$(printf '%s\n' "$effective" | awk -v k="$key" '$1==k {print $2}')"
+    [ "$actual" = "$wanted" ] || { err "$user 的 $key 未生效（检查 Include/Match）"; apply_failure_handler 1; }
+  done
+  effective_ports="$(printf '%s\n' "$effective" | awk '$1=="port" {print $2}' | sort -nu | paste -sd, -)"
+  [ "$effective_ports" = "$TARGET_PORTS" ] || { err 'Port 与目标不符（可能存在其他 Include 中的 Port）'; apply_failure_handler 1; }
+  actual_users="$(printf '%s\n' "$effective" | awk '$1=="allowusers" {for(i=2;i<=NF;i++) print $i}' | sort -u | paste -sd, -)"
+  expected_users="$(printf '%s\n' "$ALLOW_USERS" | tr ',' '\n' | sort -u | paste -sd, -)"
+  [ "$actual_users" = "$expected_users" ] || { err 'AllowUsers 与目标不符'; apply_failure_handler 1; }
+done
+
+if [ "$PERMIT_ROOT" = no ]; then
+  root_config="$(ssh_effective_config -C "user=root,host=$CLIENT_ADDR,addr=$CLIENT_ADDR")"
+  [ "$(printf '%s\n' "$root_config" | awk '$1=="permitrootlogin" {print $2}')" = no ] || {
+    err 'root 的 Match 配置覆盖了禁用策略'; apply_failure_handler 1;
+  }
 fi
-
-# --- 写新配置
-ALLOW_USERS_SPACED="$(echo "$ALLOW_USERS" | tr ',' ' ')"
-NEW_CONF=$(cat <<EOF
-# Managed by server-bootstrap 08-ssh-harden — generated $TS
-# 想回滚：bash 08-ssh-harden.sh rollback
-Port $PORT
-PermitRootLogin $PERMIT_ROOT
-PasswordAuthentication $PASSWORD_AUTH
-KbdInteractiveAuthentication $PASSWORD_AUTH
-ChallengeResponseAuthentication $PASSWORD_AUTH
-PubkeyAuthentication yes
-AllowUsers $ALLOW_USERS_SPACED
-X11Forwarding no
-ClientAliveInterval 60
-ClientAliveCountMax 3
-EOF
-)
-
-if [ "$USE_DROPIN" -eq 1 ]; then
-  TARGET="$SSHD_DROPIN_DIR/$DROPIN_NAME"
-  log "写 drop-in：$TARGET"
-  "${SUDO[@]}" mkdir -p "$SSHD_DROPIN_DIR"
-  echo "$NEW_CONF" | "${SUDO[@]}" tee "$TARGET" >/dev/null
-  "${SUDO[@]}" chmod 644 "$TARGET"
-else
-  log "无 Include 指令, 把配置追加到 $SSHD_MAIN 末尾（已先备份）"
-  echo "$NEW_CONF" | "${SUDO[@]}" tee -a "$SSHD_MAIN" >/dev/null
-fi
-
-# --- 校验
-log "sshd -t 校验"
-if ! "${SUDO[@]}" sshd -t; then
-  err "sshd -t 失败！立即回滚"
-  apply_failure_handler 1
-fi
-ok "sshd -t 通过"
 
 # --- reload（不 restart, 保活当前会话）
 log "systemctl reload sshd（保活当前会话）"
-"${SUDO[@]}" systemctl reload ssh 2>/dev/null || \
-  "${SUDO[@]}" systemctl reload sshd 2>/dev/null || \
-  { err "reload 失败"; apply_failure_handler 1; }
+ssh_reload_daemon || { err "reload 失败"; apply_failure_handler 1; }
 ok "sshd reloaded"
 
-# --- socket activation 处理
-# Ubuntu 22.04+ / Debian 12+: ssh.socket 持有 listening fd, sshd_config 的 Port 被旁路
-# 必须改 socket 单元的 ListenStream, 然后 restart ssh.socket（不影响已建立的 SSH 会话）
-SOCKET_OVERRIDE=""
-if [ -n "$SOCKET_UNIT" ]; then
+# Preserve the socket's bind addresses and address families. No port request
+# means no socket override at all.
+if [ -n "$SOCKET_UNIT" ] && [ -n "$REQUESTED_PORT" ] && [ "$TARGET_PORTS" != "$ORIGINAL_PORTS" ]; then
+  [ -n "$SOCKET_ADDRESSES" ] || { err '无法读取 SSH socket 监听地址'; apply_failure_handler 1; }
   SOCKET_OVERRIDE="$(socket_override_path "$SOCKET_UNIT")"
-  log "检测到 socket activation ($SOCKET_UNIT), 写 ListenStream override → $SOCKET_OVERRIDE"
   "${SUDO[@]}" mkdir -p "$(dirname "$SOCKET_OVERRIDE")"
-  # ListenStream= 空行清空原值, 否则 systemd 追加而非替换。
-  # 必须显式写 0.0.0.0:$PORT + [::]:$PORT 双栈监听 — 上游 ssh.socket 的 [Socket]
-  # 段带了 BindIPv6Only=ipv6-only, 单写 "ListenStream=$PORT" 会被强制 IPv6-only,
-  # IPv4 客户端连不进, ss 只看得到 tcp6 :::$PORT。这跟上游的 IPv4+IPv6 双栈写法对齐。
-  cat <<EOF | "${SUDO[@]}" tee "$SOCKET_OVERRIDE" >/dev/null
-# Managed by server-bootstrap 08-ssh-harden — generated $TS
-[Socket]
-ListenStream=
-ListenStream=0.0.0.0:$PORT
-ListenStream=[::]:$PORT
-EOF
-  "${SUDO[@]}" chmod 644 "$SOCKET_OVERRIDE"
+  {
+    printf '# Managed by server-bootstrap\n[Socket]\nListenStream=\n'
+    while read -r address; do
+      [ -n "$address" ] || continue
+      printf 'ListenStream=%s:%s\n' "${address%:*}" "$PORT"
+    done <<< "$SOCKET_ADDRESSES" | sort -u
+  } | "${SUDO[@]}" tee "$SOCKET_OVERRIDE.tmp" >/dev/null
+  "${SUDO[@]}" chmod 644 "$SOCKET_OVERRIDE.tmp"
+  "${SUDO[@]}" mv "$SOCKET_OVERRIDE.tmp" "$SOCKET_OVERRIDE"
   "${SUDO[@]}" systemctl daemon-reload
-  log "重启 $SOCKET_UNIT（仅切换 listening fd, 已建立的 SSH 会话不受影响）"
-  if ! "${SUDO[@]}" systemctl restart "$SOCKET_UNIT"; then
-    err "重启 $SOCKET_UNIT 失败, 立即回滚"
-    apply_failure_handler 1
-  fi
-  ok "$SOCKET_UNIT 已切换到端口 $PORT"
-else
-  log "未检测到 socket activation, 走传统 sshd 直接 listen 模式"
+  "${SUDO[@]}" systemctl restart "$SOCKET_UNIT"
 fi
-
-# --- 实际端口监听验证（不能只信 sshd -t 和 reload）
-log "验证端口 $PORT 实际监听"
-PORT_LISTEN_OK=0
-for _ in 1 2 3 4 5; do
-  if "${SUDO[@]}" ss -tlnH 2>/dev/null | awk '{print $4}' | grep -qE "[:.]$PORT\$"; then
-    PORT_LISTEN_OK=1
-    break
-  fi
+LISTEN_OK=0
+for attempt in 1 2 3 4 5; do
+  if [ "$(ssh_actual_ports 2>/dev/null || true)" = "$TARGET_PORTS" ]; then LISTEN_OK=1; break; fi
   sleep 1
 done
-if [ "$PORT_LISTEN_OK" -ne 1 ]; then
-  err "端口 $PORT 没有任何进程监听！立即内联回滚"
-  err "可能原因：socket activation 切换失败 / 端口已被占用 / sshd 启动失败"
-  apply_failure_handler 1
-fi
-ok "端口 $PORT 已确认监听"
-
+[ "$LISTEN_OK" -eq 1 ] || { err 'SSH 实际监听与目标不符'; apply_failure_handler 1; }
 trap - ERR
 
-cat <<EOF
-
-\033[1;33m============================================================\033[0m
-\033[1;33m 下一步（重要 — 请仔细做）：\033[0m
-\033[1;33m============================================================\033[0m
- 1) 不要关闭你当前这个 SSH 会话！
- 2) 在另一台机器（或当前机器的另一个终端）尝试登录新端口：
-       ssh -p $PORT <user>@<this-host>
- 3) 如果新端口能登上来：
-       bash $REPO_ROOT/scripts/08-ssh-harden.sh confirm
-    （取消 deadman, 视为加固成功）
- 4) 如果登不上来：什么都别做。$ROLLBACK_MIN 分钟后会自动回滚。
-    或者立即手动回滚：
-       bash $REPO_ROOT/scripts/08-ssh-harden.sh rollback
-
-\033[1;31m⚠ 云防火墙 / 安全组提醒：\033[0m
-   如果你这台机器在 AWS/阿里云/腾讯云/GCP 等云平台, 请确保
-   入站规则已经放行端口 $PORT, 否则 sshd 接受连接但包到不了。
-
-EOF
+printf 'SSH 配置已应用，端口 %s，回滚窗口 %s 分钟。\n' "$TARGET_PORTS" "$ROLLBACK_MIN"
+echo '保持当前会话，从第二个终端建立新的公钥连接。成功后运行 confirm；失败运行 rollback。'

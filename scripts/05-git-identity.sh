@@ -60,9 +60,4 @@ if [ -z "$(git config --global init.defaultBranch || true)" ]; then
   ok "init.defaultBranch = main"
 fi
 
-# 安全：禁用 askpass 弹窗（无 GUI 服务器上常见问题）
-if [ -z "$(git config --global core.askPass || true)" ]; then
-  git config --global core.askPass ""
-fi
-
 log "完成"

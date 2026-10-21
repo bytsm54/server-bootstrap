@@ -14,3 +14,7 @@
 
 # Isolated feature worktrees
 .worktrees/
+
+# Local Python helper/test environment
+.venv/
+__pycache__/

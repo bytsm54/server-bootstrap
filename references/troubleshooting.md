@@ -1,249 +1,136 @@
-# Troubleshooting
+# 排错说明
 
-按"症状"快速跳。
+先保留失败输出和退出码，处理具体失败后重跑对应阶段。不要通过删除用户配置、工具或 SSH 恢复记录来绕过错误。
 
-## 1. `command not found: node` / `npm` / `claude`（在 Claude Code 的 Bash tool 里）
+## 没有交互终端
 
-**原因**：Claude Code 的 `Bash` 工具每次起新 bash 子进程, **不会** 自动 source 你的 `~/.zshrc` 或 `~/.bashrc`, 所以 nvm 不会自动加载, `~/.local/bin` 也可能不在 PATH 里。
+`curl | bash` 的标准输入是脚本内容，入口会打开 `/dev/tty` 收集参数。无终端的执行器使用 `--stage prepare --yes` 并显式提供缺少的 Git 身份，再按 [Skill 流程](../SKILL.md) 单独完成 SSH 和 fail2ban。
 
-**解决**：把命令套上 `with-env.sh`：
+`--yes` 不能代替 SSH 第二连接验证。`--stage prepare` 成功也不表示完整初始化已结束。
+
+## Ubuntu、systemd 或 sudo 检查失败
+
+只支持运行 systemd 的 Ubuntu。普通容器、未启动 systemd 的环境不会通过预检。
+
+root 执行系统阶段时不需要 sudo；普通用户需要可用 sudo。仅有 root 账号时，先创建普通管理账号并加入 sudo 组，为它配置公钥，从新终端验证登录和 sudo，再继续。不要把整套用户态安装命令套在 `sudo` 下，否则配置可能写进 root 的主目录。
+
+## Python venv 创建失败
+
+先运行基础依赖阶段安装 `python3-venv`：
 
 ```bash
-bash ~/server-bootstrap/scripts/lib/with-env.sh -- claude --version
-bash ~/server-bootstrap/scripts/lib/with-env.sh -- npm install -g something
-bash ~/server-bootstrap/scripts/lib/with-env.sh -- bash ~/server-bootstrap/scripts/05-git-identity.sh --name a --email b@c.com
+bash scripts/02-base-deps.sh
 ```
 
-或手动 source：
+默认辅助环境位于本项目 `.venv`；项目目录不可写时，可将 `BOOTSTRAP_VENV` 指向当前用户可写的专用位置，后续阶段和验收保持同一设置。业务项目使用其自己的 `.venv`。不要使用 `sudo pip` 或 `--break-system-packages` 回退到系统环境。
+
+## 非交互 Shell 找不到 Node 或 Bun
+
+新子进程不一定读取用户 rc 文件。使用环境包装器：
+
 ```bash
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-export PATH="$HOME/.local/bin:$PATH"
+bash scripts/lib/with-env.sh -- node --version
+bash scripts/lib/with-env.sh -- bun --version
 ```
 
-如果你是在普通 SSH 终端里, 重新登录 / 开个新 shell 一般就好（rc 文件被自动加载）。
+包装器只加载现有环境并调整进程 PATH，不删除软链或工具。nvm 是 Shell 函数；当前交互 Shell 可执行 `. "$HOME/.nvm/nvm.sh"` 加载。Node 和 Bun 默认不安装，先确认是否选择了对应选项。
 
----
+## Node 镜像或版本校验失败
 
-## 2. `02-base-deps.sh` 提示需要 sudo, 但服务器没装 sudo
+选择官方源重试：
 
-**情况 A：你是 root**
-直接以 root 跑就好, 脚本会跳过 `sudo` 调用：
 ```bash
-bash ~/server-bootstrap/scripts/02-base-deps.sh
+unset NVM_SOURCE NVM_NODEJS_ORG_MIRROR NVM_INSTALLER_TAG NVM_EXPECTED_COMMIT
+bash scripts/03-node.sh --node-version lts --npm-registry official
 ```
 
-**情况 B：你是普通用户但没 sudo**
-让 root 帮你装：
+新 nvm 下载先验证 tag 对应的固定 commit，再加载代码。校验失败时不会执行未验证内容；保留的临时目录可供检查。只有明确选择其他可信版本时，才同时更新 tag 和对应 commit，不能为绕过校验直接接受下载结果。
+
+已有 `~/.nvm` 但缺少有效 `nvm.sh` 时，先检查目录内容并保留需要的数据，再选择修复路径。不要直接删除整个目录，它可能含已有 Node 版本和全局包。
+
+## Shell 配置管理块损坏或文件是软链
+
+管理块使用明确的 BEGIN/END 标记。标记不配对、重复或文件是软链时停止，避免覆盖未知内容。检查原文件和旁边的 `.server-bootstrap.bak`，保留用户内容后修复管理块，再重跑对应阶段。
+
+已有 zsh 配置使用自定义的 oh-my-zsh 加载方式时，可能无法找到插入主题设置的锚点。先检查配置如何加载主题，不要把整份 `.zshrc` 换成模板。语法可以通过 `zsh -n "$HOME/.zshrc"` 检查。
+
+## 项目准备被拒绝或依赖失败
+
+- origin 不匹配：核对传入仓库地址和目标目录，必要时选择另一目录。
+- 存在本地改动：先由用户处理改动；脚本不自动 stash、reset、pull 或切换分支。
+- 缺少包管理器：按锁文件要求准备相应工具，再重跑；不要通过更换包管理器绕过锁文件。
+- Python 依赖失败：检查项目 `.venv` 和安装日志；不向系统 Python 安装依赖。
+- `.env` 已存在：内容保持不变。若被 Git 跟踪或是软链，先处理对应状态再填写凭据。
+
+项目准备成功不包含业务启动或业务测试。验收依赖准备记录时还会核对当前提交，切换提交后需要重新准备。
+
+## SSH 端口占用或无法识别监听
+
+查看主服务与 socket 的实际状态：
+
 ```bash
-su -
-apt-get update && apt-get install -y --no-install-recommends curl ca-certificates git build-essential sudo
-usermod -aG sudo your-user   # 可选
-exit
+sudo ss -ltnp
+systemctl show ssh.service --property=MainPID
+systemctl status ssh.socket
+systemctl show ssh.socket --property=Listen
 ```
-然后回到普通用户身份重跑后续 phase。
 
----
+SSH 登录监听根据主进程及 active socket 归属识别；会话进程的反向转发端口不属于登录端口。自定义端口被其他服务占用时应更换端口或处理占用，不能强制覆盖。填写当前登录端口是合法的。
 
-## 3. `git clone` 失败：`Could not resolve host: github.com`
+无法确认进程归属、socket 地址或实际端口时，脚本会停止，不会默认使用某个固定端口。socket 模式还会检查主服务的 `KillMode=process` 和对 SSH socket 的 `Requires` 依赖；自定义的终止策略不满足保留会话的条件时，先检查服务覆盖配置，不要直接绕过检查。
 
-网络问题。检查：
+## SSH 新连接失败或超时
+
+保持原会话，立即执行：
+
 ```bash
-ping -c 2 8.8.8.8        # 网络通吗
-ping -c 2 github.com     # DNS 通吗
-curl -I https://github.com  # HTTPS 通吗
+bash scripts/08-ssh-harden.sh rollback
 ```
 
-国内服务器经常需要镜像或代理。临时方案：
+也可等待已安排的自动回滚。当前截止时间可通过以下命令读取：
+
 ```bash
-# 用 GitHub 镜像代替（仅作 clone 用）
-export REPO_URL=https://gh-proxy.com/https://github.com/bytsm54/server-bootstrap.git
-bash <(curl -fsSL https://raw.githubusercontent.com/bytsm54/server-bootstrap/main/scripts/bootstrap.sh)
+bash scripts/08-ssh-harden.sh deadline
 ```
 
----
+新端口已监听但外部连接失败时，检查目标端口的主机防火墙、外部访问规则，以及允许账号、公钥和 sudo。仅在新连接确实成功后执行 `confirm`。截止时间已过时不能再确认，应检查回滚结果并重新开始。
 
-## 3b. `bootstrap.sh` 跑到 phase 03 报 `PROVIDED_VERSION: unbound variable`
+备份及对应恢复脚本位于 `/var/backups/sshd-bootstrap/`。回滚不仅恢复配置，也会恢复 socket 设置并核对原监听。若恢复失败，脚本保留恢复记录，先查看错误、系统日志和备份，通过现有会话或控制台修复；不要手动删除记录假装恢复成功。
 
-这是 nvm 在严格模式 (`set -u`) 下的已知问题——nvm.sh 内部少数代码路径会引用未初始化变量。本仓库 ≥ commit 修复后已经移除 `-u`, 如果你看到这个错, 多半是你跑的是旧版 bootstrap.sh。
+## SSH 配置未生效或存在 Include / Match 冲突
 
-恢复方法（不需要等修复）：
+脚本检查语法和生效配置；其他 Include 中的端口、AllowUsers 或 Match 认证设置可能与目标冲突。检查：
+
 ```bash
-source ~/.nvm/nvm.sh         # 当前 shell 加载 nvm
-node -v                      # 应该有版本号
-bash ~/server-bootstrap/scripts/04-claude-code.sh
-export PATH="$HOME/.local/bin:$PATH"
-claude --version
+sudo sshd -t
+sudo sshd -T
+sudo journalctl -u ssh -n 50
 ```
 
-或者拉最新仓库再跑一次 bootstrap.sh（幂等）：
+涉及用户或来源地址条件时，用 `sshd -T -C` 检查实际连接条件。不要仅根据某个配置文件包含目标文本就认定生效。先处理冲突，再重新执行 SSH 阶段。
+
+## fail2ban 配置或 jail 不可用
+
+SSH 尚有待确认或恢复记录时，先完成 SSH 状态处理。fail2ban 阶段自动读取实际端口，不接受手工传入的 SSH 端口。
+
 ```bash
-git -C ~/server-bootstrap pull --ff-only
-bash ~/server-bootstrap/scripts/bootstrap.sh
+sudo fail2ban-client -t
+sudo systemctl status fail2ban
+sudo journalctl -u fail2ban -n 50
+sudo fail2ban-client status sshd
+sudo fail2ban-client get sshd action iptables-multiport port
 ```
 
----
+阶段安装 `fail2ban`、`python3-systemd` 和 `iptables`，使用 systemd journal 作为日志来源；不要求 `/var/log/auth.log` 存在。托管配置位于 `/etc/fail2ban/jail.d/99-server-bootstrap.local`。检查是否有其他配置覆盖该 jail；运行中的 action 端口必须与实际 SSH 端口一致。
 
-## 3c. Claude Code 安装时 curl 报 `error 403`（任意服务器都可能命中）
+## 验收显示未验证或返回非零
 
-```
-[04-claude-code] 运行官方 install.sh
-curl: (22) The requested URL returned error: 403
-```
+验收不会把缺少证据当成成功。常见原因包括 sudo 无法非交互执行、SSH 仍待确认、确认后配置发生变化，或项目未有成功准备记录。
 
-**原因**：`claude.ai/install.sh` 走 Cloudflare, 对非浏览器 TLS 指纹的请求一律 403, **跟地区无关, 任何 curl 都打不通**（用浏览器访问能看到脚本内容, 是因为 TLS handshake 不同）。换 User-Agent 也没用, Cloudflare 还会校验 JA3。
+先取得所需权限或完成对应验证，再携带原目标参数执行：
 
-**这是已修复的设计缺陷**：04-claude-code.sh 默认 `--method auto`, 优先走 GitHub releases 直下二进制（不经 Cloudflare）。如果你看到这个 403, 多半是用了旧版仓库。
-
-**自动恢复**（拉新版后重跑）：
 ```bash
-git -C ~/server-bootstrap pull --ff-only
-bash ~/server-bootstrap/scripts/bootstrap.sh
+bash scripts/server-init.sh --stage verify
 ```
 
-**手动恢复**（直接从 GitHub 下二进制）：
-```bash
-LATEST=$(curl -fsSL https://api.github.com/repos/anthropics/claude-code/releases/latest \
-         | python3 -c 'import sys,json; print(json.load(sys.stdin)["tag_name"])')
-ARCH=x64; [ "$(uname -m)" = "aarch64" ] && ARCH=arm64
-T=$(mktemp -d); cd "$T"
-curl -fsSL -O "https://github.com/anthropics/claude-code/releases/download/$LATEST/claude-linux-$ARCH.tar.gz"
-curl -fsSL -O "https://github.com/anthropics/claude-code/releases/download/$LATEST/SHASUMS256.txt"
-grep "claude-linux-$ARCH.tar.gz" SHASUMS256.txt | sha256sum -c -    # 校验
-tar -xzf claude-linux-$ARCH.tar.gz
-mkdir -p ~/.local/bin && install -m 0755 claude ~/.local/bin/
-export PATH="$HOME/.local/bin:$PATH"
-claude --version
-```
-
-**长期建议**：调用本 skill 时不必特别加参数, 默认就是 GitHub 路径。要强制时：
-```
-claude_install_method=github
-```
-
-> npm 安装方式（`npm install -g @anthropic-ai/claude-code`）**已被 Anthropic 弃用**,
-> 不要再用。本 skill 已移除该路径。
-
----
-
-## 4. nvm 装完了, 但 `nvm` 命令不存在
-
-**原因**：nvm 装到 `~/.nvm`, 通过 source `~/.nvm/nvm.sh` 加载到 shell function 里, 不是真正的可执行文件。
-- 新 shell 通过 `~/.zshrc` / `~/.bashrc` 自动 source（nvm 安装时已写入）
-- 当前 shell 需要手动 source 一次：
-  ```bash
-  . ~/.nvm/nvm.sh
-  ```
-
-如果 rc 文件没被改, 看 `~/.bashrc` 末尾是否有 nvm 相关行；没有就手动加：
-```bash
-cat >> ~/.bashrc <<'EOF'
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-EOF
-```
-
----
-
-## 5. Claude Code 装好了, 但 `claude` 启动后白屏 / 卡住
-
-- 第一次启动需要登录, 走浏览器 OAuth 流程。如果你在纯命令行服务器（无 GUI）上, 它会给你一个 URL, 复制到你**本地**浏览器里完成登录, 然后把回调 token 粘回服务器终端。
-- 如果连 URL 都没看到, 可能是你被 stdout 缓冲住了。重新开一个终端, 跑 `claude` 即可。
-
----
-
-## 6. 重跑某个 phase 出错（说"已存在"或类似）
-
-所有 phase 都设计成幂等的。如果你看到 conflict / "already exists" 类错误：
-
-| Phase | 已存在状态 | 期望行为 |
-|---|---|---|
-| 02 | 包已装 | 跳过整个 phase |
-| 03 | nvm 已装、Node 版本已装 | 跳过安装, 仅 `nvm use` |
-| 04 | claude 已在 PATH | 跳过, 不重装 |
-| 05 | name/email 已是目标值 | 跳过 |
-| 06 | 项目目录已是 git 仓库 | `git pull --ff-only` |
-| 07 | plugin / skill 已装 | claude / npx 自身会报"已存在", 退出码非 0；脚本设计成"失败也继续下一个" |
-
-如果某个 phase 因为状态冲突彻底卡住, 最干净的办法是**从 0 开始**：
-```bash
-# 想重置 nvm（小心：会丢所有装过的 Node 版本和全局 npm 包）
-rm -rf ~/.nvm
-# 想重置 Claude Code（用户态, 不需要 sudo）
-rm -rf ~/.local/bin/claude ~/.config/claude
-```
-
----
-
-## 7. `npx skills add` 报 401 / 403
-
-`skills` CLI 拉的是 GitHub 仓库, 401/403 通常是：
-- 仓库是 private, 你没认证 → 改用 public, 或先 `gh auth login`
-- 仓库不存在 / 拼错
-
----
-
-## 8. SSH 加固完, 新端口登不上 / 锁出去了
-
-### 你还连着旧 SSH 会话（最常见, 最好处理）
-什么都别做, 等 deadman 自动回滚（默认 5 分钟内）。窗口期内你也可以手动：
-```bash
-bash ~/server-bootstrap/scripts/08-ssh-harden.sh rollback
-```
-回滚后 sshd 回到加固前的状态, 旧连接和旧端口又能用了。
-
-### 你已经断线了（但 deadman 还没触发）
-- **如果 deadman 设了**：等到 `--rollback-after-minutes` 分钟（默认 5）后再试旧端口, 应该能连上。
-- **如果你跑了 `--no-deadman`**：你需要带外访问（云厂商 console / 物理键盘 / IPMI）。进系统后：
-  ```bash
-  sudo bash ~/server-bootstrap/scripts/08-ssh-harden.sh rollback
-  ```
-
-### 云防火墙 / 安全组没放新端口（最常见低级失误）
-sshd 在新端口 listen 了, 但云防火墙没放行 → 包到不了。先去云控制台：
-- AWS: EC2 → Security Groups → Inbound rules → Add rule (TCP, 你的新端口)
-- 阿里云: 安全组 → 入方向规则
-- 腾讯云: 安全组 → 入站规则
-- GCP: VPC firewall rules
-
-加好规则后重试 `ssh -p <新端口> ...`。
-
-### 还是不行, 想完全恢复成「加固前」
-```bash
-# 找最近的备份
-sudo ls -1t /var/backups/sshd-bootstrap/sshd-*.tar.gz | head
-# 解开
-sudo tar xzf /var/backups/sshd-bootstrap/sshd-<时间戳>.tar.gz -C /
-# 校验 + 重载
-sudo sshd -t && sudo systemctl reload sshd
-```
-
----
-
-## 9. zsh 装好了但提示 `command not found: <something>`
-oh-my-zsh 装好后默认 plugin 列表只有 git。02b-zsh.sh 会自动追加 sudo / zsh-syntax-highlighting / zsh-autosuggestions, 但前提是 ~/.zshrc 有 `plugins=(...)` 那一行。如果你看到插件没生效：
-1. 看 `~/.zshrc` 里的 `plugins=` 行内容
-2. 缺啥补啥, 例如：
-   ```bash
-   plugins=(git sudo zsh-syntax-highlighting zsh-autosuggestions)
-   ```
-3. 重新 source: `source ~/.zshrc`
-
-如果你的 nvm 加载失效（升级 oh-my-zsh 后偶尔会发生）：检查 ~/.zshrc 末尾是不是少了：
-```bash
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-```
-
----
-
-## 10. 我想在 *别的* 机器上重新跑一次, 完全一致
-
-只要：
-```bash
-ssh new-server
-curl -fsSL https://raw.githubusercontent.com/bytsm54/server-bootstrap/main/scripts/bootstrap.sh | bash
-claude   # 登录
-# 进 claude 会话, 说："执行 server-bootstrap"
-```
-本 skill 的全部输入参数都通过参数列表传入, 不依赖任何隐藏的环境变量, 所以同样输入下行为是一致的。
+可选项未选择时显示“跳过”；不要为了消除失败而把原本选择的项目改成跳过。

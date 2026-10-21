@@ -39,6 +39,7 @@ if [ "${1:-}" = clone ]; then
 [ "${FAKE_NVM_PAYLOAD-}" != malicious ] || touch "$HOME/unverified-nvm-executed"
 nvm() {
   case "$1" in
+    version) printf '%s\n' "${FAKE_NVM_RESOLVED:-N/A}" ;;
     ls) return 0 ;;
     install)
       printf '%s\n' "${NVM_NODEJS_ORG_MIRROR-}" >"$HOME/node-mirror"
@@ -131,7 +132,16 @@ mkdir -p "$HOME"
 bash "$ROOT_DIR/scripts/03-node.sh" --npm-registry official --install-bun no
 [ "$(cat "$HOME/nvm-source")" = "https://github.com/nvm-sh/nvm.git" ] ||
   fail "official profile did not use the GitHub nvm repository"
-[ -z "$(cat "$HOME/node-mirror")" ] || fail "official profile set a custom Node mirror"
+[ "$(cat "$HOME/node-mirror")" = https://nodejs.org/dist ] || fail "official Node source mismatch"
 [ ! -e "$HOME/npm-registry" ] || fail "official profile replaced the npm registry"
+
+HOME="$TMP_ROOT/installed"
+export HOME
+unset NVM_DIR
+mkdir -p "$HOME"
+export FAKE_NVM_RESOLVED=v24.0.0
+bash "$ROOT_DIR/scripts/03-node.sh" --npm-registry official --install-bun no
+[ ! -e "$HOME/node-mirror" ] || fail "installed Node version was unnecessarily reinstalled"
+unset FAKE_NVM_RESOLVED
 
 echo "domestic Node mirror tests passed"

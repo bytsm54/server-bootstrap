@@ -24,7 +24,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 NODE_VERSION="lts"
 NPM_REGISTRY="china"
-INSTALL_BUN="yes"
+INSTALL_BUN="no"
 # These values bind both mirror and upstream installs to the reviewed nvm release.
 # Update the tag and peeled tag commit together.
 NVM_INSTALLER_TAG="${NVM_INSTALLER_TAG:-v0.40.3}"
@@ -44,6 +44,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+[[ "$NODE_VERSION" = lts || "$NODE_VERSION" =~ ^v?[0-9]+(\.[0-9]+){0,2}$ ]] || { err "Node version 无效"; exit 2; }
+
 case "$INSTALL_BUN" in
   yes|no) ;;
   *) err "--install-bun 必须是 yes 或 no"; exit 2 ;;
@@ -55,6 +57,7 @@ case "$NPM_REGISTRY" in
     export NVM_NODEJS_ORG_MIRROR="${NVM_NODEJS_ORG_MIRROR:-https://npmmirror.com/mirrors/node}"
     ;;
   official|"")
+    export NVM_NODEJS_ORG_MIRROR="https://nodejs.org/dist"
     NVM_REPOSITORY_URL="${NVM_SOURCE:-https://github.com/nvm-sh/nvm.git}"
     ;;
   *)
@@ -102,29 +105,19 @@ fi
 # shellcheck disable=SC1091
 . "$NVM_DIR/nvm.sh"
 
-# --- 2. 装 / 切换 Node
-case "$NODE_VERSION" in
-  lts|LTS)
-    if nvm ls --no-colors | grep -qE 'lts/\* +\->'; then
-      ok "Node LTS 已装"
-    else
-      log "nvm install --lts"
-      nvm install --lts
-    fi
-    nvm use --lts >/dev/null
-    nvm alias default 'lts/*' >/dev/null || true
-    ;;
-  *)
-    if nvm ls --no-colors | grep -qE "v?$NODE_VERSION([^0-9]|\$)"; then
-      ok "Node $NODE_VERSION 已装"
-    else
-      log "nvm install $NODE_VERSION"
-      nvm install "$NODE_VERSION"
-    fi
-    nvm use "$NODE_VERSION" >/dev/null
-    nvm alias default "$NODE_VERSION" >/dev/null || true
-    ;;
-esac
+# Resolve against installed versions, not the presence of an LTS alias in `nvm ls`.
+if [[ "$NODE_VERSION" = lts || "$NODE_VERSION" = LTS ]]; then
+  RESOLVED="$(nvm version 'lts/*' 2>/dev/null || true)"
+  if [ "$RESOLVED" = N/A ] || [ -z "$RESOLVED" ]; then nvm install --lts; fi
+  nvm use --lts >/dev/null
+  nvm alias default "$(node --version)" >/dev/null
+else
+  [[ "$NODE_VERSION" =~ ^v?[0-9]+(\.[0-9]+){0,2}$ ]] || { err "Node version 无效"; exit 2; }
+  RESOLVED="$(nvm version "$NODE_VERSION" 2>/dev/null || true)"
+  if [ "$RESOLVED" = N/A ] || [ -z "$RESOLVED" ]; then nvm install "$NODE_VERSION"; fi
+  nvm use "$NODE_VERSION" >/dev/null
+  nvm alias default "$(node --version)" >/dev/null
+fi
 
 ok "Node: $(node --version)"
 ok "npm:  $(npm --version)"
@@ -143,7 +136,7 @@ case "$NPM_REGISTRY" in
   official|"")
     if [ "$(npm config get registry)" != "https://registry.npmjs.org/" ]; then
       log "重置 npm registry → 官方"
-      npm config delete registry || true
+      npm config set registry https://registry.npmjs.org/
     fi
     ;;
   *)
@@ -154,125 +147,17 @@ esac
 
 ok "registry: $(npm config get registry)"
 
-# --- 4. bun（用户态, claude-mem 等 plugin 的 SessionStart hook 依赖）
-# 装到 ~/.bun/bin/bun, 不需要 sudo。
-if [ "$INSTALL_BUN" = "yes" ]; then
-  if [ -x "$HOME/.bun/bin/bun" ]; then
-    ok "bun: $("$HOME/.bun/bin/bun" --version) (已装)"
-  else
-    log "装 bun (用户态)"
-    if ! curl -fsSL https://bun.sh/install | bash; then
-      err "bun 安装失败"
-      exit 1
-    fi
-    if [ ! -x "$HOME/.bun/bin/bun" ]; then
-      err "bun installer 跑完但 ~/.bun/bin/bun 不存在"
-      exit 1
-    fi
-    ok "bun: $("$HOME/.bun/bin/bun" --version)"
-  fi
-fi
-
-# 管理 PATH / 加载行 注入到 rc 文件, 用 marker 块保证幂等:
-#
-#   bun-path     → .bashrc / .zshrc / .zshenv
-#                  .zshenv 关键: claude-mem 的 SessionStart hook 用 zsh -lc 跑命令,
-#                  这种非交互登录 shell 不读 .zshrc, 只读 .zshenv/.zprofile,
-#                  少了这步 hook 启动后报 "Bun not found"
-#
-#   nvm-load     → .bashrc / .zshrc
-#                  nvm 仓库是直接 clone 的，不会自动修改 shell rc。02b 把默认 shell
-#                  切到 zsh 后仍需要显式加载 nvm，否则重新登录后 node/npm/npx 都找不到。
-#                  我们这里同时把加载行写进 .bashrc 和 .zshrc。
-#
-#   localbin-path → .bashrc / .zshrc
-#                   ~/.local/bin 是 Claude Code / Codex / RTK 等 CLI 落地路径; 追加到
-#                   PATH 末尾, 避免云镜像预置的 ~/.local/bin/node/npm/npx 盖过 nvm。
-export INSTALL_BUN
-log "管理 PATH 注入 (.bashrc / .zshrc / .zshenv)"
-python3 - <<'PY'
-import os, re
-HOME = os.environ['HOME']
-
-SPECS = []
-if os.environ['INSTALL_BUN'] == 'yes':
-    SPECS.append({
-        'marker': '# server-bootstrap:bun-path (managed by 03-node.sh, do not edit)',
-        'block': (
-            'export BUN_INSTALL="$HOME/.bun"\n'
-            'case ":$PATH:" in *":$BUN_INSTALL/bin:"*) ;; *) export PATH="$BUN_INSTALL/bin:$PATH" ;; esac\n'
-        ),
-        'targets': ('.bashrc', '.zshrc', '.zshenv'),
-        # bun installer 自己的非幂等块, 清掉
-        'cleanup_re': re.compile(
-            r'\n*# bun\nexport BUN_INSTALL=[^\n]*\nexport PATH=[^\n]*BUN_INSTALL[^\n]*\n',
-            re.MULTILINE,
-        ),
-    })
-
-SPECS.extend([
-    {
-        'marker': '# server-bootstrap:nvm-load (managed by 03-node.sh, do not edit)',
-        'block': (
-            'export NVM_DIR="$HOME/.nvm"\n'
-            '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"\n'
-            '[ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"\n'
-        ),
-        'targets': ('.bashrc', '.zshrc'),
-        'cleanup_re': None,  # 兼容旧版 nvm installer 块, 重复 source 是 no-op
-    },
-    {
-        'marker': '# server-bootstrap:localbin-path (managed by 03-node.sh, do not edit)',
-        'block': (
-            'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$PATH:$HOME/.local/bin" ;; esac\n'
-        ),
-        'targets': ('.bashrc', '.zshrc'),
-        'cleanup_re': None,
-    },
-])
-
-def manage(path):
-    basename = os.path.basename(path)
-    active_specs = [spec for spec in SPECS if basename in spec['targets']]
-    if not active_specs:
-        return
-    if not os.path.exists(path):
-        open(path, 'a').close()
-    with open(path) as f:
-        content = f.read()
-    original = content
-    actions = []
-    for spec in active_specs:
-        if spec['cleanup_re'] is not None:
-            content, removed = spec['cleanup_re'].subn('', content)
-            if removed:
-                actions.append(f"清 {removed} 个 installer 旧块")
-        block = spec['marker'] + '\n' + spec['block']
-        old_block_re = re.compile(
-            r'\n*' + re.escape(spec['marker']) + r'\n'
-            r'.*?(?=\n# server-bootstrap:|\Z)',
-            re.DOTALL,
-        )
-        if spec['marker'] in content:
-            content, replaced = old_block_re.subn('\n' + block, content, count=1)
-            if replaced:
-                tag = spec['marker'].split(':', 1)[1].split(' ', 1)[0]
-                actions.append(f"更 {tag}")
-        else:
-            if content and not content.endswith('\n'):
-                content += '\n'
-            content += '\n' + block
-            tag = spec['marker'].split(':', 1)[1].split(' ', 1)[0]
-            actions.append(f"加 {tag}")
-    if not actions:
-        actions.append('无变化')
-    if content != original:
-        with open(path, 'w') as f:
-            f.write(content)
-    print(f'  ✅ {basename}: ' + ' / '.join(actions))
-
-for rc in ('.bashrc', '.zshrc', '.zshenv'):
-    manage(os.path.join(HOME, rc))
-PY
-
+# Write bounded configuration blocks using the project helper venv.
+. "$SCRIPT_DIR/lib/python-env.sh"
+ensure_python_env
+for rc in .bashrc .zshrc; do
+  printf 'export NVM_DIR=%q\n[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"\n' "$NVM_DIR" | \
+    "$BOOTSTRAP_PYTHON" "$SCRIPT_DIR/lib/managed_file.py" "$HOME/$rc" nvm-load
+done
+for rc in .profile .bashrc .zshrc; do
+  cat <<'EOF' | "$BOOTSTRAP_PYTHON" "$SCRIPT_DIR/lib/managed_file.py" "$HOME/$rc" localbin-path
+case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$PATH:$HOME/.local/bin" ;; esac
+EOF
+done
+if [ "$INSTALL_BUN" = yes ]; then bash "$SCRIPT_DIR/03a-bun.sh"; fi
 log "完成"

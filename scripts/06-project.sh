@@ -1,168 +1,74 @@
 #!/usr/bin/env bash
-# 06-project.sh — 可选 phase：克隆项目仓库, 自动检测语言, 装依赖, 引导写 .env
-#
-# 用法：
-#   bash 06-project.sh --repo <git-url> [--dir <path>] [--env-keys k1,k2,...]
-#
-# 行为：
-#   1) clone（已存在则 git pull --ff-only）
-#   2) 检测项目类型并装依赖：
-#        - pyproject.toml + uv.lock → uv sync
-#        - pyproject.toml          → uv sync 或 pip install -e .
-#        - requirements.txt        → 用 venv + pip
-#        - package.json + pnpm-lock → pnpm install
-#        - package.json + yarn.lock → yarn install
-#        - package.json            → npm install
-#        - Cargo.toml              → cargo build
-#        - go.mod                  → go mod download
-#   3) 如果 --env-keys 非空且项目里没有 .env, 写一个带 TODO 的模板, 不写真值
-#   4) 把 .env 加进 .gitignore（如果还没有）
-#
-# 不做：不写真 token、不动 ~/.zshrc、不安装数据库 / docker。
-
 set -euo pipefail
-
-log()  { printf '\033[1;34m[06-project]\033[0m %s\n' "$*"; }
-ok()   { printf '\033[1;32m  ✅\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;33m  ⚠️\033[0m %s\n' "$*"; }
-err()  { printf '\033[1;31m  ❌\033[0m %s\n' "$*" >&2; }
-
-REPO=""
-DIR=""
-ENV_KEYS=""
-
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --repo)     REPO="$2"; shift 2 ;;
-    --dir)      DIR="$2"; shift 2 ;;
-    --env-keys) ENV_KEYS="$2"; shift 2 ;;
-    -h|--help)
-      echo "Usage: $0 --repo <git-url> [--dir <path>] [--env-keys k1,k2,...]"
-      exit 0 ;;
-    *) err "未知参数: $1"; exit 2 ;;
-  esac
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO=''; DIR=''; ENV_KEYS=''
+while [ "$#" -gt 0 ]; do
+  [ "$#" -ge 2 ] || exit 2
+  case "$1" in --repo) REPO="$2" ;; --dir) DIR="$2" ;; --env-keys) ENV_KEYS="$2" ;; *) exit 2 ;; esac
+  shift 2
 done
-
-if [ -z "$REPO" ]; then
-  err "必须提供 --repo"
-  exit 2
+[ -n "$REPO" ] && [[ "$REPO" != -* ]] || { echo '需要有效 --repo' >&2; exit 2; }
+if [ -n "$ENV_KEYS" ] && ! [[ "$ENV_KEYS" =~ ^[A-Za-z_][A-Za-z0-9_]*(,[A-Za-z_][A-Za-z0-9_]*)*$ ]]; then
+  echo 'env-keys 只能为逗号分隔的环境变量名' >&2; exit 2
 fi
-
-if [ -z "$DIR" ]; then
-  base="$(basename "$REPO" .git)"
-  DIR="$HOME/$base"
-fi
-
-# --- 1. clone / pull
-if [ -d "$DIR/.git" ]; then
-  log "项目已存在, git pull --ff-only：$DIR"
-  git -C "$DIR" pull --ff-only || warn "pull 失败（本地可能有改动）, 继续"
+DIR="${DIR:-$HOME/$(basename "$REPO" .git)}"
+if [ -d "$DIR/.git" ] || [ -f "$DIR/.git" ]; then
+  [ "$(git -C "$DIR" remote get-url origin)" = "$REPO" ] || { echo '项目目录的 origin 与请求不符' >&2; exit 1; }
+  [ -z "$(git -C "$DIR" status --porcelain)" ] || { echo '项目存在本地改动，请先处理再安装依赖' >&2; exit 1; }
+  echo '复用当前项目版本；不自动拉取或切换版本'
+elif [ -e "$DIR" ]; then
+  echo '目标目录存在且不是 Git 仓库' >&2; exit 1
 else
-  log "克隆 $REPO → $DIR"
-  git clone "$REPO" "$DIR"
+  git clone -- "$REPO" "$DIR"
 fi
-
 cd "$DIR"
-
-# --- 2. 检测 + 装依赖
-detect_and_install() {
-  if [ -f "pyproject.toml" ] && [ -f "uv.lock" ]; then
-    log "检测到 pyproject.toml + uv.lock → uv sync"
-    install_uv_if_needed
-    uv sync
-    return
+exclude="$(git rev-parse --git-path info/exclude)"
+mkdir -p "$(dirname "$exclude")"
+for ignored in .venv/ .server-bootstrap-prepared; do
+  grep -qxF "$ignored" "$exclude" 2>/dev/null || printf '%s\n' "$ignored" >> "$exclude"
+done
+if git ls-files --error-unmatch .server-bootstrap-prepared >/dev/null 2>&1 || [ -L .server-bootstrap-prepared ]; then
+  echo '项目准备记录路径与已有文件冲突，拒绝覆盖' >&2; exit 1
+fi
+rm -f .server-bootstrap-prepared
+require_tool() { command -v "$1" >/dev/null || { echo "需要 $1；请先启用相应运行环境" >&2; return 1; }; }
+if [ -f pyproject.toml ] || [ -f requirements.txt ] || [ -f uv.lock ] || [ -f poetry.lock ] || [ -f pdm.lock ] || [ -f Pipfile.lock ]; then
+  if [ -f poetry.lock ] || [ -f pdm.lock ] || [ -f Pipfile.lock ]; then
+    echo '此项目使用尚未支持的 Python 锁文件；请使用对应管理器显式同步到项目 venv' >&2; exit 1
+  elif [ -f uv.lock ]; then
+    require_tool uv
+    UV_PROJECT_ENVIRONMENT="$PWD/.venv" uv sync --frozen
+  else
+    [ -x .venv/bin/python ] || python3 -m venv .venv
+    .venv/bin/python -c 'import sys; assert sys.prefix != sys.base_prefix'
+    if [ -f pyproject.toml ]; then .venv/bin/python -m pip install -e .
+    else .venv/bin/python -m pip install -r requirements.txt; fi
   fi
-  if [ -f "pyproject.toml" ]; then
-    log "检测到 pyproject.toml → 优先 uv"
-    install_uv_if_needed
-    uv sync || (warn "uv sync 失败, 退回 pip install -e ."; python3 -m pip install -e .)
-    return
-  fi
-  if [ -f "requirements.txt" ]; then
-    log "检测到 requirements.txt → 创建 venv + pip install"
-    if ! command -v python3 >/dev/null 2>&1; then
-      err "python3 不存在, 跳过 Python 依赖安装"; return
-    fi
-    [ -d ".venv" ] || python3 -m venv .venv
-    # shellcheck disable=SC1091
-    . .venv/bin/activate
-    pip install --upgrade pip
-    pip install -r requirements.txt
-    return
-  fi
-  if [ -f "package.json" ]; then
-    if [ -f "pnpm-lock.yaml" ]; then
-      log "检测到 pnpm-lock.yaml → pnpm install"
-      command -v pnpm >/dev/null 2>&1 || npm install -g pnpm
-      pnpm install
-    elif [ -f "yarn.lock" ]; then
-      log "检测到 yarn.lock → yarn install"
-      command -v yarn >/dev/null 2>&1 || npm install -g yarn
-      yarn install
-    else
-      log "package.json → npm install"
-      npm install
-    fi
-    return
-  fi
-  if [ -f "Cargo.toml" ]; then
-    log "Cargo.toml → cargo build"
-    if ! command -v cargo >/dev/null 2>&1; then
-      warn "cargo 未装, 跳过（请自行安装 rustup）"; return
-    fi
-    cargo build
-    return
-  fi
-  if [ -f "go.mod" ]; then
-    log "go.mod → go mod download"
-    if ! command -v go >/dev/null 2>&1; then
-      warn "go 未装, 跳过"; return
-    fi
-    go mod download
-    return
-  fi
-  warn "未识别项目类型, 跳过依赖安装。如需手动跑：cd $DIR"
-}
-
-install_uv_if_needed() {
-  if command -v uv >/dev/null 2>&1; then return; fi
-  log "uv 不存在, 安装到 ~/.local/bin（用户态, 无 sudo）"
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-  case ":$PATH:" in
-    *":$HOME/.local/bin:"*) ;;
-    *) export PATH="$HOME/.local/bin:$PATH" ;;
-  esac
-}
-
-detect_and_install
-
-# --- 3. .env 模板
+elif [ -f package.json ]; then
+  if [ -f pnpm-lock.yaml ]; then require_tool pnpm; pnpm install --frozen-lockfile
+  elif [ -f yarn.lock ]; then
+    require_tool yarn
+    case "$(yarn --version)" in 1.*) yarn install --frozen-lockfile ;; *) yarn install --immutable ;; esac
+  elif [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then require_tool npm; npm ci
+  elif [ -f bun.lock ] || [ -f bun.lockb ]; then require_tool bun; bun install --frozen-lockfile
+  else require_tool npm; npm install; fi
+elif [ -f Cargo.toml ]; then require_tool cargo; cargo build --locked
+elif [ -f go.mod ]; then require_tool go; go mod download
+else echo '未识别项目依赖清单；已克隆，依赖阶段跳过'; fi
 if [ -n "$ENV_KEYS" ]; then
-  if [ -f ".env" ]; then
-    ok ".env 已存在, 不覆盖"
-  else
-    log "生成 .env 模板（你自己填真值, 不会自动写入任何 token）"
-    {
-      echo "# Generated by server-bootstrap on $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-      echo "# 这些 key 是 06-project.sh --env-keys 传入的, 请把 TODO 替换成真值。"
-      echo "# 本文件已加入 .gitignore, 不要 commit。"
-      IFS=',' read -ra KS <<< "$ENV_KEYS"
-      for k in "${KS[@]}"; do
-        k_trim="$(echo "$k" | xargs)"
-        [ -n "$k_trim" ] && echo "${k_trim}=TODO"
-      done
-    } > .env
-    ok "已写 .env 模板, 包含 keys: $ENV_KEYS"
+  [ ! -L .env ] || { echo ".env 是软链，拒绝写入" >&2; exit 1; }
+  if [ ! -e .env ]; then
+    (umask 077; IFS=',' read -r -a keys <<< "$ENV_KEYS"; printf '%s=TODO\n' "${keys[@]}" > .env)
   fi
-
-  # 确保 .env 在 .gitignore 里
-  if [ -f ".gitignore" ]; then
-    grep -qE '^\.env$' .gitignore || { echo ".env" >> .gitignore; ok "已把 .env 加入 .gitignore"; }
-  else
-    echo ".env" > .gitignore
-    ok "新建 .gitignore 含 .env"
+  if ! git check-ignore -q .env; then
+    # Repo-local exclusion does not change a tracked .gitignore.
+    exclude="$(git rev-parse --git-path info/exclude)"
+    mkdir -p "$(dirname "$exclude")"
+    printf '\n.env\n.venv/\n' >> "$exclude"
+  fi
+  if git ls-files --error-unmatch .env >/dev/null 2>&1; then
+    echo '.env 已被 Git 跟踪，请先从索引移除再填写凭据' >&2; exit 1
   fi
 fi
-
-ok "项目就绪：$DIR"
-log "完成"
+git rev-parse HEAD > .server-bootstrap-prepared
+printf '项目准备完成: %s\n' "$DIR"

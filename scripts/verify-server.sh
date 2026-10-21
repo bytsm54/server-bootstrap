@@ -1,111 +1,94 @@
 #!/usr/bin/env bash
-# verify-server.sh — pure server initialization summary
-
-# Keep checking after missing optional or required components.
-# nvm.sh is not safe under set -u because it uses unset variables internally.
+# Read-only checks. Missing required evidence is not reported as success.
 set -o pipefail
-
-ok()   { printf '  ✅ %s\n' "$*"; }
-miss() { printf '  ❌ %s\n' "$*"; }
-warn() { printf '  ⚠️  %s\n' "$*"; }
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/toolchain.sh
+. "$SCRIPT_DIR/lib/common.sh"
+. "$SCRIPT_DIR/lib/ssh-state.sh"
 . "$SCRIPT_DIR/lib/toolchain.sh"
-
-echo "=========================="
-echo " server initialization verify"
-echo "=========================="
-
-HOST="$(hostnamectl --static 2>/dev/null || cat /etc/hostname 2>/dev/null || echo '?')"
-TZ_NOW="$(timedatectl show --property=Timezone --value 2>/dev/null || cat /etc/timezone 2>/dev/null || echo '?')"
-ok "hostname:   $HOST"
-ok "timezone:   $TZ_NOW ($(date '+%Y-%m-%d %H:%M:%S %z'))"
-
-export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
-[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" 2>/dev/null
-path_append_once "$HOME/.local/bin"
-
-if command -v node >/dev/null 2>&1; then
-  ok "Node:       $(node --version) ($(command -v node))"
-else
-  miss "Node:       未找到（试 source ~/.nvm/nvm.sh 或用 with-env.sh 包装）"
+config_defaults
+parse_config "$@" || exit 2
+validate_config || exit 2
+FAILED=0; UNVERIFIED=0
+ok() { printf '[成功] %s\n' "$*"; }
+skip() { printf '[跳过] %s\n' "$*"; }
+fail() { printf '[失败] %s\n' "$*"; FAILED=$((FAILED+1)); }
+unknown() { printf '[未验证] %s\n' "$*"; UNVERIFIED=$((UNVERIFIED+1)); }
+check() { local label="$1"; shift; if "$@" >/dev/null 2>&1; then ok "$label"; else fail "$label"; fi; }
+if [ -r /etc/os-release ]; then . /etc/os-release; fi
+[ "${ID:-}" = ubuntu ] && ok 'Ubuntu' || fail '需要 Ubuntu'
+for tool in git curl; do check "$tool" "$tool" --version; done
+VENV="${BOOTSTRAP_VENV:-$SCRIPT_DIR/../.venv}"
+check '专用 Python venv' "$VENV/bin/python" -c 'import sys; assert sys.prefix != sys.base_prefix'
+HOST="$(hostnamectl --static 2>/dev/null)"
+ZONE="$(timedatectl show --property=Timezone --value 2>/dev/null)"
+if [ -n "$HOSTNAME_VALUE" ]; then check "hostname=$HOSTNAME_VALUE" test "$HOST" = "$HOSTNAME_VALUE"; else skip "主机名保持现状 ($HOST)"; fi
+if [ -n "$TIMEZONE" ]; then check "timezone=$TIMEZONE" test "$ZONE" = "$TIMEZONE"; else skip "时区保持现状 ($ZONE)"; fi
+NAME="$(git config --global user.name 2>/dev/null)"; EMAIL="$(git config --global user.email 2>/dev/null)"
+if [ -n "$NAME" ] && [ -n "$EMAIL" ] && { [ -z "$GIT_NAME" ] || [ "$NAME" = "$GIT_NAME" ]; } && { [ -z "$GIT_EMAIL" ] || [ "$EMAIL" = "$GIT_EMAIL" ]; }; then ok 'Git 身份'; else fail 'Git 身份'; fi
+if [ "$INSTALL_NODE" = yes ]; then
+  export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  if [ -s "$NVM_DIR/nvm.sh" ]; then
+    . "$NVM_DIR/nvm.sh"
+    if [ "$NODE_VERSION" = lts ]; then wanted="$(nvm version 'lts/*')"; else wanted="$(nvm version "$NODE_VERSION")"; fi
+    check 'Node 版本' test "$(node --version 2>/dev/null)" = "$wanted"
+    check npm npm --version
+    check npx npx --version
+    case "$NPM_REGISTRY" in china) registry=https://registry.npmmirror.com ;; official) registry=https://registry.npmjs.org ;; esac
+    actual="$(npm config get registry 2>/dev/null)"
+    check 'npm registry' test "${actual%/}" = "$registry"
+  else fail 'nvm'; fi
+else skip Node; fi
+if [ "$INSTALL_BUN" = yes ]; then check Bun "$HOME/.bun/bin/bun" --version; else skip Bun; fi
+if [ "$INSTALL_ZSH" = yes ]; then
+  check zsh zsh --version
+  check 'zsh 配置语法' zsh -n "$HOME/.zshrc"
+  check '默认 zsh' test "$(getent passwd "$(id -un)" | cut -d: -f7)" = "$(command -v zsh)"
+else skip zsh; fi
+if [ -n "$PROJECT_REPO" ]; then
+  PROJECT_DIR="${PROJECT_DIR:-$HOME/$(basename "$PROJECT_REPO" .git)}"
+  check '项目来源' test "$(git -C "$PROJECT_DIR" remote get-url origin 2>/dev/null)" = "$PROJECT_REPO"
+  if [ -f "$PROJECT_DIR/.server-bootstrap-prepared" ]; then
+    check '项目依赖准备记录' test "$(cat "$PROJECT_DIR/.server-bootstrap-prepared")" = "$(git -C "$PROJECT_DIR" rev-parse HEAD 2>/dev/null)"
+  else unknown '项目依赖尚无成功准备记录'; fi
+else skip '项目准备'; fi
+PRIVILEGE=no
+if init_privilege noninteractive && "${SUDO[@]}" true 2>/dev/null; then PRIVILEGE=yes; fi
+PORTS=''
+if [ "$HARDEN_SSH" = yes ] || [ "$ENABLE_FAIL2BAN" = yes ]; then
+  if [ "$PRIVILEGE" = yes ]; then
+    if PORTS="$(ssh_actual_ports)"; then ok "SSH 实际监听: $PORTS"; else fail 'SSH 监听归属'; fi
+  else unknown 'sudo 不可用，无法核验 SSH/fail2ban'; fi
 fi
-
-if command -v npm >/dev/null 2>&1; then
-  ok "npm:        $(npm --version) ($(command -v npm))  prefix=$(npm prefix -g) registry=$(npm config get registry)"
-else
-  miss "npm:        未找到"
-fi
-
-if command -v node >/dev/null 2>&1; then
-  NVM_NODE_BIN="$(dirname "$(command -v node)")"
-  for tool in node npm npx; do
-    LOCAL_TOOL="$HOME/.local/bin/$tool"
-    if [ -e "$LOCAL_TOOL" ]; then
-      miss "Toolchain:  $LOCAL_TOOL shadows managed nvm $tool"
-    elif [ "$(command -v "$tool" 2>/dev/null || true)" = "$NVM_NODE_BIN/$tool" ]; then
-      ok "Toolchain:  $tool uses managed nvm path"
-    else
-      warn "Toolchain:  $tool path is $(command -v "$tool" 2>/dev/null || echo '?')"
-    fi
+if [ "$HARDEN_SSH" = yes ] && [ "$PRIVILEGE" = yes ]; then
+  check 'SSH 语法' "${SUDO[@]}" sshd -t
+  if [ -n "$SSH_PORT" ]; then check 'SSH 目标端口' test "$PORTS" = "$((10#$SSH_PORT))"; fi
+  client="${SSH_CONNECTION:-}"; client="${client%% *}"; client="${client:-127.0.0.1}"
+  IFS=',' read -r -a users <<< "$SSH_ALLOW_USERS"
+  for user in "${users[@]}"; do
+    config="$(ssh_effective_config -C "user=$user,host=$client,addr=$client")"
+    for pair in "permitrootlogin:$SSH_PERMIT_ROOT" "passwordauthentication:$SSH_PASSWORD_AUTH" "kbdinteractiveauthentication:$SSH_PASSWORD_AUTH" 'pubkeyauthentication:yes'; do
+      key="${pair%%:*}"
+      check "SSH $user $key" test "$(printf '%s\n' "$config" | awk -v k="$key" '$1==k {print $2}')" = "${pair#*:}"
+    done
+    actual_users="$(printf '%s\n' "$config" | awk '$1=="allowusers" {for(i=2;i<=NF;i++) print $i}' | sort -u | paste -sd, -)"
+    expected_users="$(printf '%s\n' "$SSH_ALLOW_USERS" | tr ',' '\n' | sort -u | paste -sd, -)"
+    check "SSH $user AllowUsers" test "$actual_users" = "$expected_users"
   done
-fi
-
-if [ -x "$HOME/.bun/bin/bun" ]; then
-  ok "Bun:        $("$HOME/.bun/bin/bun" --version) ($HOME/.bun/bin/bun)"
-elif command -v bun >/dev/null 2>&1; then
-  ok "Bun:        $(bun --version) ($(command -v bun))"
-fi
-
-GN="$(git config --global user.name 2>/dev/null || true)"
-GE="$(git config --global user.email 2>/dev/null || true)"
-GB="$(git config --global init.defaultBranch 2>/dev/null || true)"
-if [ -n "$GN" ] && [ -n "$GE" ]; then
-  ok "git:        $GN <$GE>"
-else
-  miss "git:        全局身份未配置（跑 05-git-identity.sh）"
-fi
-[ -z "$GB" ] || ok "git branch: $GB"
-
-if command -v zsh >/dev/null 2>&1; then
-  USER_SHELL="$(getent passwd "$(id -un)" | cut -d: -f7)"
-  if [ "$USER_SHELL" = "$(command -v zsh)" ]; then
-    ok "zsh:        $(zsh --version | awk '{print $2}') (默认 shell)"
-  else
-    ok "zsh:        $(zsh --version | awk '{print $2}') (非默认, 默认是 $USER_SHELL)"
+  if [ "$SSH_PERMIT_ROOT" = no ]; then
+    root_config="$(ssh_effective_config -C "user=root,host=$client,addr=$client")"
+    check 'SSH root 禁用' test "$(printf '%s\n' "$root_config" | awk '$1=="permitrootlogin" {print $2}')" = no
   fi
-  if [ -f "$HOME/.zshrc" ] && grep -qE '^ZSH_THEME=' "$HOME/.zshrc"; then
-    THEME="$(grep -m1 -E '^ZSH_THEME=' "$HOME/.zshrc" | sed -E 's/^ZSH_THEME="?([^\"]*)"?.*/\1/')"
-    ok "zsh theme:  $THEME"
-  fi
-fi
-
-if command -v ss >/dev/null 2>&1; then
-  SSHD_PORTS="$(ss -ltnpH 2>/dev/null | grep -i sshd \
-                | awk '{print $4}' | awk -F: '{print $NF}' \
-                | sort -u | tr '\n' ',' | sed 's/,$//')"
-  [ -z "$SSHD_PORTS" ] || ok "sshd:       listening on ${SSHD_PORTS}"
-fi
-
-if [ -f /var/run/sshd-bootstrap-deadman.atjob ] || sudo -n test -f /var/run/sshd-bootstrap-deadman.atjob 2>/dev/null; then
-  warn "SSH:        发现挂起的 deadman 任务 — 你应该跑 phase 08 confirm 或 rollback"
-fi
-
-if command -v fail2ban-client >/dev/null 2>&1; then
-  if sudo -n systemctl is-active --quiet fail2ban 2>/dev/null; then
-    ok "fail2ban:   service active"
-  else
-    warn "fail2ban:   已装但 service 未运行（sudo systemctl start fail2ban）"
-  fi
-
-  if sudo -n fail2ban-client status sshd >/dev/null 2>&1; then
-    ok "fail2ban:   sshd jail active"
-  else
-    warn "fail2ban:   sshd jail unavailable"
-  fi
-fi
-
-echo "=========================="
-echo " done"
-echo "=========================="
+  if "${SUDO[@]}" test -s /var/run/sshd-bootstrap-deadman.atjob; then unknown 'SSH 等待确认或回滚';
+  elif "${SUDO[@]}" test -s /var/lib/server-bootstrap/ssh-confirmed && "${SUDO[@]}" sha256sum -c /var/lib/server-bootstrap/ssh-confirmed >/dev/null 2>&1; then ok 'SSH 第二连接已确认，托管配置校验和一致';
+  else unknown 'SSH 第二连接未确认，或确认后配置已变化'; fi
+elif [ "$HARDEN_SSH" = no ]; then skip 'SSH 加固'; fi
+if [ "$ENABLE_FAIL2BAN" = yes ] && [ "$PRIVILEGE" = yes ]; then
+  check 'fail2ban 配置' "${SUDO[@]}" fail2ban-client -t
+  check 'fail2ban 自启' "${SUDO[@]}" systemctl is-enabled --quiet fail2ban
+  check 'fail2ban 运行' "${SUDO[@]}" systemctl is-active --quiet fail2ban
+  check 'sshd jail' "${SUDO[@]}" fail2ban-client status sshd
+  actual="$("${SUDO[@]}" fail2ban-client get sshd action iptables-multiport port 2>/dev/null | tr -d '[:space:]')"
+  if [ -n "$PORTS" ] && [ "$actual" = "$PORTS" ]; then ok 'fail2ban 端口与 SSH 一致'; else fail 'fail2ban 端口与 SSH 不一致'; fi
+elif [ "$ENABLE_FAIL2BAN" = no ]; then skip fail2ban; fi
+printf '验收结果：失败 %s 项，未验证 %s 项\n' "$FAILED" "$UNVERIFIED"
+[ "$FAILED" -eq 0 ] && [ "$UNVERIFIED" -eq 0 ]

@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/common.sh"
 . "$SCRIPT_DIR/lib/ssh-state.sh"
 . "$SCRIPT_DIR/lib/toolchain.sh"
+. "$SCRIPT_DIR/lib/fail2ban-state.sh"
 config_defaults
 parse_config "$@" || exit 2
 validate_config || exit 2
@@ -38,7 +39,10 @@ if [ "$INSTALL_NODE" = yes ]; then
     check 'npm registry' test "${actual%/}" = "$registry"
   else fail 'nvm'; fi
 else skip Node; fi
-if [ "$INSTALL_BUN" = yes ]; then check Bun "$HOME/.bun/bin/bun" --version; else skip Bun; fi
+if [ "$INSTALL_BUN" = yes ]; then
+  check Bun "$HOME/.bun/bin/bun" --version
+  if command -v zsh >/dev/null; then check 'Bun 非交互 zsh PATH' zsh -lc 'command -v bun'; fi
+else skip Bun; fi
 if [ "$INSTALL_ZSH" = yes ]; then
   check zsh zsh --version
   check 'zsh 配置语法' zsh -n "$HOME/.zshrc"
@@ -75,7 +79,7 @@ if [ "$HARDEN_SSH" = yes ] && [ "$PRIVILEGE" = yes ]; then
   IFS=',' read -r -a users <<< "$SSH_ALLOW_USERS"
   for user in "${users[@]}"; do
     config="$(ssh_effective_config -C "user=$user,host=$client,addr=$client")"
-    for pair in "permitrootlogin:$SSH_PERMIT_ROOT" "passwordauthentication:$SSH_PASSWORD_AUTH" "kbdinteractiveauthentication:$SSH_PASSWORD_AUTH" 'pubkeyauthentication:yes'; do
+    for pair in "permitrootlogin:$SSH_PERMIT_ROOT" "passwordauthentication:$SSH_PASSWORD_AUTH" "kbdinteractiveauthentication:$SSH_PASSWORD_AUTH" 'pubkeyauthentication:yes' 'clientaliveinterval:60' 'clientalivecountmax:3'; do
       key="${pair%%:*}"
       check "SSH $user $key" test "$(printf '%s\n' "$config" | awk -v k="$key" '$1==k {print $2}')" = "${pair#*:}"
     done
@@ -96,8 +100,9 @@ if [ "$ENABLE_FAIL2BAN" = yes ] && [ "$PRIVILEGE" = yes ]; then
   check 'fail2ban 自启' "${SUDO[@]}" systemctl is-enabled --quiet fail2ban
   check 'fail2ban 运行' "${SUDO[@]}" systemctl is-active --quiet fail2ban
   check 'sshd jail' "${SUDO[@]}" fail2ban-client status sshd
-  actual="$("${SUDO[@]}" fail2ban-client get sshd action iptables-multiport port 2>/dev/null | tr -d '[:space:]')"
-  if [ -n "$PORTS" ] && [ "$actual" = "$PORTS" ]; then ok 'fail2ban 端口与 SSH 一致'; else fail 'fail2ban 端口与 SSH 不一致'; fi
+  BOOTSTRAP_PYTHON="$VENV/bin/python"
+  if [ -n "$PORTS" ] && f2b_plan | f2b_check "$PORTS"; then ok 'fail2ban 动作、运行参数及 SSH 端口一致'
+  else fail 'fail2ban 动作或实际 SSH 端口不一致'; fi
 elif [ "$ENABLE_FAIL2BAN" = no ]; then skip fail2ban; fi
 printf '验收结果：失败 %s 项，未验证 %s 项\n' "$FAILED" "$UNVERIFIED"
 [ "$FAILED" -eq 0 ] && [ "$UNVERIFIED" -eq 0 ]

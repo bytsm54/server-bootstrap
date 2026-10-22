@@ -53,7 +53,7 @@ Agent 会按 [SKILL.md](SKILL.md) 完成以下工作：
 | `--project-dir` | 提供仓库后默认为 `~/<仓库名>` |
 | `--env-keys` | 空；可传逗号分隔的环境变量名，只创建缺失的 `.env` 占位文件 |
 
-默认 Shell 的切换在新登录会话中生效；已有会话保持原 Shell。powerlevel10k 首次交互登录可能显示外观配置向导，也可在 zsh 中运行 `p10k configure` 调整。验收会检查 oh-my-zsh 和所选主题是否实际加载。
+zsh 阶段同时安装 `fonts-powerline`、自动建议和语法高亮，保留自定义插件并补齐 `git sudo`。可用阶段参数 `--user <账号>` 为指定管理账号配置，用户文件以该账号身份写入。默认 Shell 的切换在新登录会话中生效；已有会话保持原 Shell。powerlevel10k 首次交互登录可能显示外观配置向导，也可在 zsh 中运行 `p10k configure` 调整。验收会检查 oh-my-zsh 和所选主题是否实际加载。
 
 ## SSH 修改流程
 
@@ -63,7 +63,7 @@ Agent 会按 [SKILL.md](SKILL.md) 完成以下工作：
 4. 保持原会话，建立第二个新连接验证。验证时禁用 ControlMaster 连接复用并强制公钥认证（具体选项见 Skill）；成功后确认并取消回滚；失败或超时恢复原配置，并核对恢复后的监听。
 5. SSH 状态确认后配置 fail2ban。它读取实际端口，验证配置、服务、自启和 sshd jail 的运行参数。
 
-SSH 阶段使用并发锁；未确认的修改必须先确认或回滚，不能重复覆盖。普通服务使用 reload；Ubuntu socket activation 会检测实际 SSH socket，调整端口时保留其监听地址，并检查主服务的 `KillMode=process` 及对应 socket 依赖后重启 socket 同步监听、保留现有会话。自定义终止策略不满足要求时在修改前拒绝。脚本不代管云平台访问规则，也不将“本地监听成功”等同于“外部连接已成功”。
+SSH 加固包含 `ClientAliveInterval 60` 和 `ClientAliveCountMax 3`，并核对生效值。SSH 阶段使用并发锁；未确认的修改必须先确认或回滚，不能重复覆盖。普通服务使用 reload；Ubuntu socket activation 会检测实际 SSH socket，调整端口时保留其监听地址，并检查主服务的 `KillMode=process` 及对应 socket 依赖后重启 socket 同步监听、保留现有会话。自定义终止策略不满足要求时在修改前拒绝。脚本不代管云平台访问规则，也不将“本地监听成功”等同于“外部连接已成功”。
 
 ## 独立脚本使用（可选）
 
@@ -81,6 +81,8 @@ curl -fsSL https://raw.githubusercontent.com/bytsm54/server-bootstrap/main/scrip
 ```
 
 缺少下载工具时，引导入口安装 Git、curl 和 CA 证书。已有目录会核对 origin 并使用当前版本，不自动拉取代码；管道输入时从 `/dev/tty` 读取交互输入。
+
+交互入口在启用 Node 时询问版本与镜像，在启用 SSH 时询问 root/密码登录及回滚窗口；已明确传入的选项不重复询问。
 
 完整选项及只读配置预览：
 
@@ -107,8 +109,10 @@ bash ~/server-bootstrap/scripts/server-init.sh \
 
 - 基础包按功能安装；Python 辅助程序使用本项目 `.venv`。Python 项目使用项目自己的 `.venv`，不向系统 Python 安装依赖。
 - Shell 配置只更新 `# BEGIN server-bootstrap:...` / `# END server-bootstrap:...` 之间的管理块，写入前备份并原子替换，保留其他内容。`with-env.sh` 只调整当前进程环境，不删除工具或软链。
-- Node 使用 nvm，先解析已安装版本再决定是否安装。新安装 nvm 时验证固定 tag 对应的 commit，验证通过才加载。`china` 使用国内镜像；`official` 使用上游源。Bun 使用官方发布的二进制包。
-- 项目目录已存在时核对 origin，发现本地改动即停止，不自动拉取或切换版本。按识别到的锁文件安装依赖；`poetry.lock`、`pdm.lock`、`Pipfile.lock` 暂不自动处理，检测到会停止而不回退为无锁安装；所需包管理器未安装时明确失败，不隐式安装全局工具。
+- Node 使用 nvm，先解析已安装版本再决定是否安装。新安装 nvm 时验证固定 tag 对应的 commit，验证通过才加载。恢复 nvm 的 Bash/zsh 补全；Bun PATH 同时写入 `.zshenv`，支持非交互 zsh。`china` 使用国内镜像；`official` 使用上游源。Bun 使用官方发布的二进制包。
+- 项目目录已存在时核对 origin，发现本地改动即停止，不自动拉取或切换版本。按识别到的锁文件安装依赖；`poetry.lock`、`pdm.lock`、`Pipfile.lock` 暂不自动处理，检测到会停止而不回退为无锁安装；选择项目准备后，按需安装 `build-essential`（Python 项目另装 `python3-dev`）。缺少 uv 时安装到用户专用工具 venv；`pyproject.toml` 使用 uv 同步，已有 `uv.lock` 使用 `--frozen`。pnpm/yarn 按 `packageManager` 声明通过 [Corepack](https://github.com/nodejs/corepack) 准备，缺少 Corepack 时安装到本项目专用的用户目录，不覆盖全局工具或软链。Node/Bun 运行环境仍需单独启用；不同管理器的锁文件或版本声明冲突会停止。
+- 升级旧版配置时，仅处理有本项目标记的旧 SSH socket `override.conf` 和 fail2ban `sshd.local` 中的托管设置，保留其他自定义内容并备份；失败时恢复。fail2ban 继承系统或用户的 `action/banaction`，按动作补齐防火墙依赖；配置和运行状态一致时不重启 jail。
+- Git 身份和已有 `core.askPass` 选择保持不变；未设置 `core.askPass` 时写入空值。预检实际执行 sudo 提权测试，并按所选功能报告工具及源连通性。
 - 只在 `.env` 不存在时创建权限为 `600` 的占位文件；已有文件保持原样。环境变量值由用户在项目中填写，不写入 Shell 配置。
 
 ## 脚本索引

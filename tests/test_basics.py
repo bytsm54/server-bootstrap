@@ -37,6 +37,7 @@ class IsolatedCase(unittest.TestCase):
         for name in ('NVM_DIR', 'BASH_ENV', 'ENV', 'SUDO_USER', 'BOOTSTRAP_VENV', 'REPO_DIR'):
             self.env.pop(name, None)
         self.env['TRACE'] = str(self.base / 'trace')
+        self.stub('dpkg-query', "printf 'install ok installed'")
         # A mistaken host mutation must fail before executing any real command.
         for name in ('sudo', 'apt-get', 'systemctl', 'chsh', 'service', 'pip', 'pip3'):
             self.stub(name, 'echo "forbidden command: $0 $*" >&2; exit 97')

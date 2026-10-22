@@ -10,7 +10,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = r'''
-import os, sys, pathlib, hashlib, fcntl
+import os, sys, pathlib, hashlib, fcntl, json, configparser
 p=pathlib.Path(os.environ['FIXTURE']); name=pathlib.Path(sys.argv[0]).name; a=sys.argv[1:]
 def read(name, default=''):
     q=p/name
@@ -43,7 +43,12 @@ elif name=='systemctl':
     if a[0]=='reload' and a[1] in ('ssh','sshd','ssh.service','sshd.service') and not read('socket'): write('live',','.join(ports()))
     if a[0]=='restart' and a[1]=='ssh.socket':
         f=p/'etc/systemd/system/ssh.socket.d/99-server-bootstrap.conf'
-        values=[x.rsplit(':',1)[-1] for x in f.read_text().splitlines() if x.startswith('ListenStream=') and x!='ListenStream='] if f.exists() else ['2222']
+        values=['2222']
+        for file in sorted(f.parent.glob('*.conf')):
+            for line in file.read_text().splitlines():
+                if line == 'ListenStream=': values=[]
+                elif line.startswith('ListenStream='): values.append(line.rsplit(':',1)[-1])
+        values=list(dict.fromkeys(values))
         write('live',','.join(values))
         if read('restart-fail') and f.exists():
             (p/'restart-fail').unlink(); sys.exit(1)
@@ -74,13 +79,26 @@ elif name=='sha256sum':
 elif name=='dpkg-query': print('install ok installed',end='')
 elif name=='fail2ban-client':
     if read('f2b-fail'): sys.exit(1)
-    # fail2ban 1.1 drops a newly introduced action on plain reload.
-    if a==['reload']: write('f2b-action','missing')
-    elif a==['reload','--restart','sshd']: write('f2b-action','ready')
-    if a[:2]==['get','sshd']:
-        if read('f2b-query-fail') or read('f2b-action')!='ready': sys.exit(1)
-        f=p/'etc/fail2ban/jail.d/99-server-bootstrap.local'
-        print(next(x.split('=',1)[1].strip() for x in f.read_text().splitlines() if x.startswith('port =')))
+    conf=configparser.ConfigParser(interpolation=None)
+    conf.read(sorted((p/'etc/fail2ban/jail.d').glob('*.local')))
+    jail=dict(conf['sshd']) if conf.has_section('sshd') else {}
+    action=jail.get('action', jail.get('banaction','nftables-multiport')).split('[',1)[0]
+    props={'port': jail.get('port','2222'), 'actionban': read('f2b-ban', '<nftables> add element <table> { <ip> }')}
+    plan={'actions':{action:props}, 'settings': {k:jail.get(k,v) for k,v in [('maxretry','5'),('findtime','600'),('bantime','3600')]}}
+    if a==['-d']:
+        if read('f2b-dump-fail'): print('invalid dump'); sys.exit(1)
+        for k,v in plan['settings'].items(): print(repr(['set','sshd',k,v]))
+        print(repr(['set','sshd','addaction',action]))
+        print(repr(['multi-set','sshd','action',action,list(props.items())]))
+    # A snapshot models the running jail independently of files on disk.
+    elif a==['reload']: write('f2b-live',json.dumps({'actions':{},'settings':plan['settings']}))
+    elif a==['reload','--restart','sshd']: write('f2b-live',json.dumps(plan))
+    elif a[:2]==['get','sshd']:
+        if read('f2b-query-fail') or not read('f2b-live'): sys.exit(1)
+        live=json.loads(read('f2b-live'))
+        if a[2]=='actions': print('The jail sshd has the following actions:\n'+'\n'.join(live['actions']))
+        elif a[2]=='action': print(live['actions'][a[3]][a[4]])
+        else: print(live['settings'][a[2]])
 else: raise RuntimeError(name)
 '''
 
@@ -105,6 +123,7 @@ class SSH(unittest.TestCase):
             (self.p/'bin'/name).symlink_to(driver)
         self.env={**os.environ,'PATH':str(self.p/'bin')+':/usr/bin:/bin:/usr/sbin:/sbin','FIXTURE':str(self.p),'HOME':str(self.p/'home/tester')}
         self.env.pop('SSH_CONNECTION',None)
+        self.env['BOOTSTRAP_VENV']=str(ROOT/'.venv')
         self.record=self.p/'var/run/sshd-bootstrap-deadman.atjob'
     def tearDown(self): self.temp.cleanup()
     def run_script(self,*args,script='08-ssh-harden.sh',success=True):
@@ -181,17 +200,91 @@ class SSH(unittest.TestCase):
     def test_failed_socket_restart_restores_listener(self):
         (self.p/'socket').write_text('1');(self.p/'restart-fail').write_text('1')
         self.apply('2200',success=False);self.assertEqual((self.p/'live').read_text(),'2222');self.assertFalse(self.record.exists())
+    def test_legacy_socket_migration_preserves_custom_options_and_rolls_back(self):
+        (self.p/'socket').write_text('1')
+        legacy=self.p/'etc/systemd/system/ssh.socket.d/override.conf'
+        legacy.parent.mkdir(parents=True)
+        original='# Managed by server-bootstrap 08-ssh-harden — generated old\n[Socket]\nListenStream=\nListenStream=[::]:2222\nBacklog=512\n'
+        legacy.write_text(original)
+        self.apply('2200')
+        self.assertIn('Backlog=512',legacy.read_text())
+        self.assertNotIn('ListenStream=',legacy.read_text())
+        self.assertEqual((self.p/'live').read_text(),'2200')
+        self.run_script('rollback')
+        self.assertEqual(legacy.read_text(),original)
+        self.assertEqual((self.p/'live').read_text(),'2222')
+    def test_unmarked_socket_override_is_preserved_and_conflict_rolls_back(self):
+        (self.p/'socket').write_text('1')
+        legacy=self.p/'etc/systemd/system/ssh.socket.d/override.conf'
+        legacy.parent.mkdir(parents=True)
+        original='[Socket]\nListenStream=\nListenStream=[::]:2222\n'
+        legacy.write_text(original)
+        self.apply('2200',success=False)
+        self.assertEqual(legacy.read_text(),original)
+        self.assertFalse(self.record.exists())
+    def test_keepalive_is_in_effective_config(self):
+        self.apply()
+        config=(self.p/'etc/ssh/sshd_config.d/00-server-bootstrap.conf').read_text()
+        self.assertIn('ClientAliveInterval 60\nClientAliveCountMax 3',config)
+    def test_fail2ban_repeat_keeps_live_jail_without_restart(self):
+        self.run_script(script='09-fail2ban.sh')
+        jail=self.p/'etc/fail2ban/jail.d/99-server-bootstrap.local'
+        before=jail.read_bytes()
+        (self.p/'trace').write_text('')
+        self.run_script(script='09-fail2ban.sh')
+        self.assertEqual(jail.read_bytes(),before)
+        self.assertNotIn('reload --restart',(self.p/'trace').read_text())
+    def test_fail2ban_migrates_old_owned_keys_keeps_custom_action_and_ignoreip(self):
+        legacy=self.p/'etc/fail2ban/jail.d/sshd.local'
+        legacy.parent.mkdir(parents=True)
+        original='# Managed by server-bootstrap 09-fail2ban\n[sshd]\nport = 22\nmaxretry = 3\nbanaction = nftables-multiport\nignoreip = 127.0.0.1\n'
+        legacy.write_text(original)
+        self.run_script(script='09-fail2ban.sh')
+        self.assertNotIn('port =',legacy.read_text())
+        self.assertIn('ignoreip = 127.0.0.1',legacy.read_text())
+        self.assertIn('banaction = nftables-multiport',legacy.read_text())
+        self.assertEqual(Path(str(legacy)+'.server-bootstrap.bak').read_text(),original)
+        self.assertIn('nftables-multiport',(self.p/'f2b-live').read_text())
+    def test_fail2ban_failure_restores_legacy_and_new_files(self):
+        legacy=self.p/'etc/fail2ban/jail.d/sshd.local'
+        legacy.parent.mkdir(parents=True)
+        original='# Managed by server-bootstrap 09-fail2ban\n[sshd]\nport = 22\n'
+        legacy.write_text(original)
+        (self.p/'f2b-query-fail').write_text('1')
+        self.run_script(script='09-fail2ban.sh',success=False)
+        self.assertEqual(legacy.read_text(),original)
+        self.assertFalse((legacy.parent/'99-server-bootstrap.local').exists())
     def test_fail2ban_uses_confirmed_ports_and_refuses_pending(self):
         self.apply('2200');self.run_script(script='09-fail2ban.sh',success=False)
         self.run_script('confirm');self.run_script(script='09-fail2ban.sh')
         self.assertIn('port = 2200',(self.p/'etc/fail2ban/jail.d/99-server-bootstrap.local').read_text())
+    def test_fail2ban_dump_failure_restores_once(self):
+        jail=self.p/'etc/fail2ban/jail.d/99-server-bootstrap.local'
+        jail.parent.mkdir(parents=True)
+        original='[sshd]\nignoreip = 127.0.0.1\n'
+        jail.write_text(original)
+        (self.p/'f2b-dump-fail').write_text('1')
+        result=self.run_script(script='09-fail2ban.sh',success=False)
+        self.assertEqual(jail.read_text(),original)
+        self.assertEqual(result.stderr.count('已恢复先前配置'),1)
+    def test_fail2ban_does_not_claim_notification_only_action_as_protection(self):
+        (self.p/'f2b-ban').write_text('curl -X POST https://example.invalid/notify')
+        self.run_script(script='09-fail2ban.sh',success=False)
+        self.assertFalse((self.p/'etc/fail2ban/jail.d/99-server-bootstrap.local').exists())
+    def test_fail2ban_rejects_later_parameter_override_without_touching_custom_file(self):
+        custom=self.p/'etc/fail2ban/jail.d/zz-custom.local'
+        custom.parent.mkdir(parents=True)
+        custom.write_text('[sshd]\nmaxretry = 99\n')
+        self.run_script(script='09-fail2ban.sh',success=False)
+        self.assertEqual(custom.read_text(),'[sshd]\nmaxretry = 99\n')
+        self.assertFalse((custom.parent/'99-server-bootstrap.local').exists())
     def test_fail2ban_query_failure_restores_existing_config_once(self):
         jail=self.p/'etc/fail2ban/jail.d/99-server-bootstrap.local'
         jail.parent.mkdir(parents=True)
-        jail.write_text('existing configuration\n')
+        jail.write_text('[sshd]\nignoreip = 127.0.0.1\n')
         (self.p/'f2b-query-fail').write_text('1')
         result=self.run_script(script='09-fail2ban.sh',success=False)
-        self.assertEqual(jail.read_text(),'existing configuration\n')
+        self.assertEqual(jail.read_text(),'[sshd]\nignoreip = 127.0.0.1\n')
         self.assertEqual(result.stderr.count('已恢复先前配置'),1)
         self.assertNotIn('cannot stat',result.stderr)
 

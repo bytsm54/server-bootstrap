@@ -443,8 +443,14 @@ else
   TARGET_PORTS="$ORIGINAL_PORTS"
 fi
 SOCKET_ADDRESSES=''
+LEGACY_SOCKET=''
 if [ -n "$SOCKET_UNIT" ]; then
   SOCKET_ADDRESSES="$(ssh_socket_addresses "$SOCKET_UNIT")"
+  legacy="/etc/systemd/system/${SOCKET_UNIT}.d/override.conf"
+  if "${SUDO[@]}" test -f "$legacy" && "${SUDO[@]}" grep -q '^# Managed by server-bootstrap 08-ssh-harden' "$legacy" && "${SUDO[@]}" grep -q '^[[:space:]]*ListenStream[[:space:]]*=' "$legacy"; then
+    [ ! -L "$legacy" ] || { err '旧 SSH socket 配置是软链，拒绝迁移'; exit 1; }
+    LEGACY_SOCKET="$legacy"
+  fi
   SERVICE_UNIT="${SOCKET_UNIT%.socket}.service"
   KILL_MODE="$("${SUDO[@]}" systemctl show "$SERVICE_UNIT" --property=KillMode --value)"
   [ "$KILL_MODE" = process ] || { err "$SERVICE_UNIT 的 KillMode 必须为 process 才能保留当前会话"; exit 1; }
@@ -615,14 +621,14 @@ awk -v managed_include="Include $TARGET" '
   echo '# Managed by server-bootstrap'
   printf '%s\n' "$TARGET_PORTS" | tr ',' '\n' | while read -r target_port; do printf 'Port %s\n' "$target_port"; done
   printf 'PermitRootLogin %s\nPasswordAuthentication %s\nKbdInteractiveAuthentication %s\n' "$PERMIT_ROOT" "$PASSWORD_AUTH" "$PASSWORD_AUTH"
-  printf 'PubkeyAuthentication yes\nAllowUsers %s\nX11Forwarding no\n' "${ALLOW_USERS//,/ }"
+  printf 'PubkeyAuthentication yes\nAllowUsers %s\nX11Forwarding no\nClientAliveInterval 60\nClientAliveCountMax 3\n' "${ALLOW_USERS//,/ }"
 } | "${SUDO[@]}" tee "$TARGET.tmp" >/dev/null
 "${SUDO[@]}" chmod 644 "$TARGET.tmp"
 "${SUDO[@]}" mv "$TARGET.tmp" "$TARGET"
 "${SUDO[@]}" sshd -t
 for user in "${USERS[@]}"; do
   effective="$(ssh_effective_config -C "user=$user,host=$CLIENT_ADDR,addr=$CLIENT_ADDR")"
-  for pair in "permitrootlogin:$PERMIT_ROOT" "passwordauthentication:$PASSWORD_AUTH" "kbdinteractiveauthentication:$PASSWORD_AUTH" 'pubkeyauthentication:yes'; do
+  for pair in "permitrootlogin:$PERMIT_ROOT" "passwordauthentication:$PASSWORD_AUTH" "kbdinteractiveauthentication:$PASSWORD_AUTH" 'pubkeyauthentication:yes' 'clientaliveinterval:60' 'clientalivecountmax:3'; do
     key="${pair%%:*}"; wanted="${pair#*:}"
     actual="$(printf '%s\n' "$effective" | awk -v k="$key" '$1==k {print $2}')"
     [ "$actual" = "$wanted" ] || { err "$user 的 $key 未生效（检查 Include/Match）"; apply_failure_handler 1; }
@@ -646,9 +652,9 @@ log "systemctl reload sshd（保活当前会话）"
 ssh_reload_daemon || { err "reload 失败"; apply_failure_handler 1; }
 ok "sshd reloaded"
 
-# Preserve the socket's bind addresses and address families. No port request
-# means no socket override at all.
-if [ -n "$SOCKET_UNIT" ] && [ -n "$REQUESTED_PORT" ] && [ "$TARGET_PORTS" != "$ORIGINAL_PORTS" ]; then
+# Preserve bind addresses and families. A blank port leaves the socket untouched
+# unless migrating a recognized legacy override, whose listeners are retained.
+if [ -n "$SOCKET_UNIT" ] && { [ -n "$LEGACY_SOCKET" ] || { [ -n "$REQUESTED_PORT" ] && [ "$TARGET_PORTS" != "$ORIGINAL_PORTS" ]; }; }; then
   [ -n "$SOCKET_ADDRESSES" ] || { err '无法读取 SSH socket 监听地址'; apply_failure_handler 1; }
   SOCKET_OVERRIDE="$(socket_override_path "$SOCKET_UNIT")"
   "${SUDO[@]}" mkdir -p "$(dirname "$SOCKET_OVERRIDE")"
@@ -656,11 +662,23 @@ if [ -n "$SOCKET_UNIT" ] && [ -n "$REQUESTED_PORT" ] && [ "$TARGET_PORTS" != "$O
     printf '# Managed by server-bootstrap\n[Socket]\nListenStream=\n'
     while read -r address; do
       [ -n "$address" ] || continue
-      printf 'ListenStream=%s:%s\n' "${address%:*}" "$PORT"
+      if [ -n "$REQUESTED_PORT" ]; then printf 'ListenStream=%s:%s\n' "${address%:*}" "$PORT"
+      else printf 'ListenStream=%s\n' "$address"; fi
     done <<< "$SOCKET_ADDRESSES" | sort -u
   } | "${SUDO[@]}" tee "$SOCKET_OVERRIDE.tmp" >/dev/null
   "${SUDO[@]}" chmod 644 "$SOCKET_OVERRIDE.tmp"
   "${SUDO[@]}" mv "$SOCKET_OVERRIDE.tmp" "$SOCKET_OVERRIDE"
+  if [ -n "$LEGACY_SOCKET" ]; then
+    # The old file sorts after 99-*. Remove only its managed listen keys;
+    # leave other user options/sections in place. The paired tar restores both.
+    "${SUDO[@]}" cp -p "$LEGACY_SOCKET" "$LEGACY_SOCKET.server-bootstrap.tmp"
+    "${SUDO[@]}" awk '
+      /^[[:space:]]*\[/ {section=$0; gsub(/[[:space:]]/, "", section)}
+      section=="[Socket]" && /^[[:space:]]*ListenStream[[:space:]]*=/ {next}
+      {print}
+    ' "$LEGACY_SOCKET" | "${SUDO[@]}" tee "$LEGACY_SOCKET.server-bootstrap.tmp" >/dev/null
+    "${SUDO[@]}" mv "$LEGACY_SOCKET.server-bootstrap.tmp" "$LEGACY_SOCKET"
+  fi
   "${SUDO[@]}" systemctl daemon-reload
   "${SUDO[@]}" systemctl restart "$SOCKET_UNIT"
 fi

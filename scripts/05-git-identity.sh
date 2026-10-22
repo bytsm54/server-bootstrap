@@ -60,4 +60,8 @@ if [ -z "$(git config --global init.defaultBranch || true)" ]; then
   ok "init.defaultBranch = main"
 fi
 
+# Preserve any explicit credential UI chosen by the user.
+if ! git config --global --get core.askPass >/dev/null; then
+  git config --global core.askPass ''
+fi
 log "完成"

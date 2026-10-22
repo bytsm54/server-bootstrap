@@ -13,7 +13,7 @@ description: 由 AI Agent 通过对话完成 Ubuntu 服务器初始化：探测�
 
 ## 探测与开场对话
 
-在目标环境中先运行 `bash scripts/01-preflight.sh` 确认 Ubuntu、systemd 与执行账号，再用只读命令检查 sudo 能力、主机名、时区、SSH 监听和已有 Git 身份。权限不足或无法确认目标时说明具体缺少的信息；不要先在别处试跑安装。
+在目标环境中先运行 `bash scripts/01-preflight.sh` 确认 Ubuntu、systemd、实际 sudo 提权与执行账号，再用只读命令检查主机名、时区、SSH 监听和已有 Git 身份。权限不足或无法确认目标时说明具体缺少的信息；不要先在别处试跑安装。
 
 把原主机名和实际 SSH 端口集合记录为本次会话的验收基线；用户选择保持现状时，最后还要与这份基线比较。sudo 命令存在不等于有提权权限，需实际检查其可用性。
 
@@ -25,7 +25,7 @@ description: 由 AI Agent 通过对话完成 Ubuntu 服务器初始化：探测�
 | SSH 端口 | 默认 `22022`，可自定义；用户明确选择保持现状时传空字符串 |
 | 时区 | 默认 `Asia/Shanghai`，可自定义或保持现状（空字符串） |
 | 管理账号 | 复用普通 sudo 用户，SSH 允许用户名可用逗号分隔 |
-| Git 身份 | 复用已有 `user.name` / `user.email`，仅缺失时询问 |
+| Git 身份 | 复用已有 `user.name` / `user.email`，仅缺失时询问；保留已有 `core.askPass`，未设置时写空值 |
 | SSH 加固 | 默认启用；验证公钥登录后关闭密码、键盘交互和 root 登录 |
 | fail2ban | 默认启用，跟随实际 SSH 端口 |
 | zsh | 默认安装 zsh + oh-my-zsh + powerlevel10k，将当前管理账号的默认 Shell 改为 zsh；可明确跳过 |
@@ -59,6 +59,12 @@ description: 由 AI Agent 通过对话完成 Ubuntu 服务器初始化：探测�
 
 表中的变量表示本次已收集的实际值，调用时正确引用和传参。Node 版本、镜像及 zsh 主题等未指定值同样读取共用默认值。Python 辅助程序使用本项目 venv，业务项目依赖使用项目自己的 venv；不退回系统级 pip。项目来源、已有改动、锁文件和 `.env` 保护由阶段脚本检查，失败时处理原因再继续。
 
+选择 Node 时还要收集版本及镜像；选择 SSH 时保留 root/密码登录默认 `no` 和自动回滚窗口默认 5 分钟，用户明确调整时传入对应参数。参数确定后可再次调用预检并附带所选功能参数，检查相关下载源连通性。网络提示不等于整个初始化失败，实际下载阶段仍须核对结果。
+
+zsh 阶段包括 `fonts-powerline`、自动建议和语法高亮；已有 oh-my-zsh 配置会保留自定义插件并补齐 `git sudo`，发行版提供的自动建议/高亮通过文件加载，避免当作缺失的 oh-my-zsh 插件。为其他管理账号配置时可用 `02b-zsh.sh --user <账号>`，脚本会切换到该账号写用户文件。Node 恢复 nvm 补全，Bun 也写入非交互 zsh 读取的 `.zshenv`。
+
+选择项目准备意味着授权按需安装其构建工具和包管理器：Python 项目使用专用工具 venv 中的 uv 和项目 `.venv`；`pyproject.toml` 用 uv 同步，已有锁文件保持冻结。pnpm/yarn 按项目 `packageManager` 版本准备，缺少 Corepack 时装到用户专用目录。仍须遵循用户对 Node/Bun 的选择，缺少运行环境时说明该项目需要它，不能悄悄改变用户明确的跳过选择。仅有 requirements.txt 时继续在项目 venv 中安装。
+
 `server-init.sh` 保留给独立终端使用，也可用 `--stage prepare --yes` 批量调用普通阶段。使用批量入口时仍由你收集参数、检查结果并继续完成 SSH、fail2ban 和验收；不要启动等待 stdin 的完整交互入口后让用户接管。用户只需参与缺失信息、选择和必须在其客户端完成的连接验证。
 
 ## SSH 连接验证与恢复
@@ -86,6 +92,8 @@ description: 由 AI Agent 通过对话完成 Ubuntu 服务器初始化：探测�
    新连接中核对 `whoami` 是目标管理账号，再执行 `sudo -n id -u`，成功输出 `0` 即证明 sudo 可用。仅在该命令因需要密码认证而失败时，在同一连接的交互终端中完成 `sudo -v`，然后重试 `sudo -n id -u`；不要将免密账号的 `sudo -v` 失败当成无法提权。仅登录成功不算完成账号与 sudo 验证。
 5. 得到新连接成功的证据且未超时，由你执行 `bash scripts/08-ssh-harden.sh confirm`。失败立即执行 `rollback`；临近截止仍无证据时也回滚，不接受过期确认。若对话暂停或原会话中断，已安排的 `at` 任务负责超时恢复；继续工作前检查实际状态。不得用旧会话仍在线或本地监听成功代替连接验证。
 6. 确认或回滚完成后，按选择执行 fail2ban。它使用验证后的实际监听端口，不能手工传入推测值。回滚只代表恢复了原状态，本次请求的 SSH 调整仍应标为未完成。
+
+SSH keepalive 使用 `ClientAliveInterval 60`、`ClientAliveCountMax 3`，验收检查实际生效值。升级时迁移带项目标记的旧 socket `override.conf` 的监听项并保留其他自定义内容；失败恢复新旧文件。fail2ban 同样迁移旧 `sshd.local` 的托管键，保留用户动作，按所用动作验证端口及依赖；状态一致时不重启 jail。
 
 未确认的 SSH 修改不能再次 apply 覆盖；出现此状态先处理 confirm / rollback。普通服务使用 reload；socket 模式检查主服务 `KillMode=process` 及对应 socket 依赖后同步监听，保留现有会话。不要删除锁或恢复记录绕过检查。
 

@@ -4,6 +4,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/common.sh"
 HOSTNAME_VALUE=''; TIMEZONE=''
 while [ "$#" -gt 0 ]; do
+  case "$1" in -h|--help) echo 'Usage: 02a-system.sh [--hostname name] [--timezone zone]'; exit 0 ;; esac
   [ "$#" -ge 2 ] || exit 2
   case "$1" in --hostname) HOSTNAME_VALUE="$2" ;; --timezone) TIMEZONE="$2" ;; *) exit 2 ;; esac
   shift 2

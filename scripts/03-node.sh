@@ -151,7 +151,7 @@ ok "registry: $(npm config get registry)"
 . "$SCRIPT_DIR/lib/python-env.sh"
 ensure_python_env
 for rc in .bashrc .zshrc; do
-  printf 'export NVM_DIR=%q\n[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"\n' "$NVM_DIR" | \
+  printf 'export NVM_DIR=%q\n[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"\n[ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"\n' "$NVM_DIR" | \
     "$BOOTSTRAP_PYTHON" "$SCRIPT_DIR/lib/managed_file.py" "$HOME/$rc" nvm-load
 done
 for rc in .profile .bashrc .zshrc; do

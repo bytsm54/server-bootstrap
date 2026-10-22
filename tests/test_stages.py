@@ -46,6 +46,15 @@ if [ "${1:-}" = deadline ]; then echo "$DEADLINE"; fi''',directory=self.phases)
                     '--git-name','Tester','--git-email','test@example.invalid',
                     '--harden-ssh','no','--enable-fail2ban','no',input='\n'+theme+'\nyes\n'))
                 self.assertIn(f'02b-zsh.sh <--theme> <{theme or "powerlevel10k/powerlevel10k"}>',self.trace())
+    def test_interactive_node_version_and_security_overrides_reach_phases(self):
+        self.good(self.run_cmd(BASH,SCRIPTS/'server-init.sh',
+            '--hostname','','--timezone','','--install-node','yes','--install-bun','no',
+            '--install-zsh','no','--git-name','Tester','--git-email','test@example.invalid',
+            '--harden-ssh','yes','--ssh-port','22022','--ssh-allow-users','tester',
+            '--enable-fail2ban','yes', input='24\nofficial\nno\nno\n8\nyes\n已准备\n成功\n'))
+        trace=self.trace()
+        self.assertIn('03-node.sh <--node-version> <24> <--npm-registry> <official>',trace)
+        self.assertIn('<--permit-root> <no> <--password-auth> <no> <--rollback-after-minutes> <8>',trace)
     def test_new_connection_confirmation_and_actual_port_handoff(self):
         for args,port in [((), '22022'), (('--ssh-port','4444'), '4444'), (('--ssh-port',''), '')]:
             with self.subTest(args=args):
@@ -62,7 +71,7 @@ if [ "${1:-}" = deadline ]; then echo "$DEADLINE"; fi''',directory=self.phases)
                     '--hostname','','--timezone','','--install-node','no','--install-bun','no',
                     '--install-zsh','no','--git-name','Tester','--git-email','test@example.invalid',
                     '--harden-ssh','yes','--ssh-allow-users','tester','--enable-fail2ban','yes',
-                    input=answer+'\nyes\n已准备\n成功\n'))
+                    input=answer+'\n\n\n\nyes\n已准备\n成功\n'))
                 self.assertIn(f'08-ssh-harden.sh <apply> <--port> <{port}>',self.trace())
     def test_timeout_or_failed_connection_rolls_back_and_returns_failure(self):
         for deadline,answer in [('2000000010','成功'),('2000000300','失败')]:

@@ -57,6 +57,10 @@ if [ "$ASSUME_YES" != yes ] && [ "$STAGE" != verify ]; then
   prompt_option --timezone TIMEZONE '时区（输入 keep 保持现状）'
   [ "$TIMEZONE" != keep ] || TIMEZONE=''
   prompt_option --install-node INSTALL_NODE '安装 Node (yes/no)'
+  if [ "$INSTALL_NODE" = yes ]; then
+    prompt_option --node-version NODE_VERSION 'Node 版本 (lts 或版本号)'
+    prompt_option --npm-registry NPM_REGISTRY 'npm 镜像 (china/official)'
+  fi
   prompt_option --install-bun INSTALL_BUN '安装 Bun (yes/no)'
   prompt_option --install-zsh INSTALL_ZSH '安装 zsh + oh-my-zsh 并设为默认 Shell (yes/no)'
   if [ "$INSTALL_ZSH" = yes ]; then prompt_option --zsh-theme ZSH_THEME 'zsh 主题'; fi
@@ -67,6 +71,9 @@ if [ "$ASSUME_YES" != yes ] && [ "$STAGE" != verify ]; then
     prompt_option --ssh-port SSH_PORT 'SSH 端口（回车采用默认值，输入 keep 保持现状）'
     [ "$SSH_PORT" != keep ] || SSH_PORT=''
     prompt_option --ssh-allow-users SSH_ALLOW_USERS 'SSH 允许用户（逗号分隔）'
+    prompt_option --ssh-permit-root SSH_PERMIT_ROOT '允许 root SSH 登录 (yes/no)'
+    prompt_option --ssh-password-auth SSH_PASSWORD_AUTH '允许密码 SSH 登录 (yes/no)'
+    prompt_option --ssh-rollback-minutes SSH_ROLLBACK_MINUTES 'SSH 自动回滚窗口（分钟）'
   fi
   prompt_option --enable-fail2ban ENABLE_FAIL2BAN '启用 fail2ban (yes/no)'
 fi
@@ -90,7 +97,7 @@ verify_args=(--hostname "$HOSTNAME_VALUE" --timezone "$TIMEZONE" --install-node 
   --ssh-allow-users "$SSH_ALLOW_USERS" --ssh-permit-root "$SSH_PERMIT_ROOT" --ssh-password-auth "$SSH_PASSWORD_AUTH"
   --enable-fail2ban "$ENABLE_FAIL2BAN" --repo "$PROJECT_REPO" --project-dir "$PROJECT_DIR")
 if [ "$STAGE" = verify ]; then run_phase verify-server.sh "${verify_args[@]}"; exit; fi
-run_phase 01-preflight.sh
+run_phase 01-preflight.sh --install-node "$INSTALL_NODE" --npm-registry "$NPM_REGISTRY" --install-bun "$INSTALL_BUN" --install-zsh "$INSTALL_ZSH" --repo "$PROJECT_REPO"
 WITH_SSH=no
 if [ "$HARDEN_SSH" = yes ] || [ "$ENABLE_FAIL2BAN" = yes ]; then WITH_SSH=yes; fi
 run_phase 02-base-deps.sh --with-ssh "$WITH_SSH"

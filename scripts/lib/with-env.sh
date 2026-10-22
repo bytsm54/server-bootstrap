@@ -9,7 +9,8 @@ if [ -s "$NVM_DIR/nvm.sh" ]; then
   NODE_CURRENT="$(nvm which current 2>/dev/null || true)"
   [ ! -x "$NODE_CURRENT" ] || path_prepend_once "$(dirname "$NODE_CURRENT")"
 fi
-[ ! -d "$HOME/.bun/bin" ] || path_append_once "$HOME/.bun/bin"
+export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
+[ ! -d "$BUN_INSTALL/bin" ] || path_append_once "$BUN_INSTALL/bin"
 path_append_once "$HOME/.local/bin"
 [ "${1:-}" != -- ] || shift
 [ "$#" -gt 0 ] || { echo 'Usage: with-env.sh -- command [args]' >&2; exit 2; }

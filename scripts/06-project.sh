@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/lib/project-tools.sh"
 REPO=''; DIR=''; ENV_KEYS=''
 while [ "$#" -gt 0 ]; do
+  case "$1" in -h|--help) echo 'Usage: 06-project.sh --repo url [--dir path] [--env-keys key,...]'; exit 0 ;; esac
   [ "$#" -ge 2 ] || exit 2
   case "$1" in --repo) REPO="$2" ;; --dir) DIR="$2" ;; --env-keys) ENV_KEYS="$2" ;; *) exit 2 ;; esac
   shift 2
@@ -31,29 +33,49 @@ if git ls-files --error-unmatch .server-bootstrap-prepared >/dev/null 2>&1 || [ 
   echo '项目准备记录路径与已有文件冲突，拒绝覆盖' >&2; exit 1
 fi
 rm -f .server-bootstrap-prepared
-require_tool() { command -v "$1" >/dev/null || { echo "需要 $1；请先启用相应运行环境" >&2; return 1; }; }
 if [ -f pyproject.toml ] || [ -f requirements.txt ] || [ -f uv.lock ] || [ -f poetry.lock ] || [ -f pdm.lock ] || [ -f Pipfile.lock ]; then
   if [ -f poetry.lock ] || [ -f pdm.lock ] || [ -f Pipfile.lock ]; then
     echo '此项目使用尚未支持的 Python 锁文件；请使用对应管理器显式同步到项目 venv' >&2; exit 1
-  elif [ -f uv.lock ]; then
-    require_tool uv
-    UV_PROJECT_ENVIRONMENT="$PWD/.venv" uv sync --frozen
+  fi
+  prepare_build_tools python3-dev
+  if [ -f uv.lock ] || [ -f pyproject.toml ]; then
+    prepare_uv
+    if [ -f uv.lock ]; then UV_PROJECT_ENVIRONMENT="$PWD/.venv" uv sync --frozen
+    else
+      # A generated lock stays local until the owner decides to track it.
+      grep -qxF uv.lock "$exclude" 2>/dev/null || printf '%s\n' uv.lock >> "$exclude"
+      UV_PROJECT_ENVIRONMENT="$PWD/.venv" uv sync
+    fi
   else
     [ -x .venv/bin/python ] || python3 -m venv .venv
     .venv/bin/python -c 'import sys; assert sys.prefix != sys.base_prefix'
-    if [ -f pyproject.toml ]; then .venv/bin/python -m pip install -e .
-    else .venv/bin/python -m pip install -r requirements.txt; fi
+    .venv/bin/python -m pip install -r requirements.txt
   fi
 elif [ -f package.json ]; then
-  if [ -f pnpm-lock.yaml ]; then require_tool pnpm; pnpm install --frozen-lockfile
-  elif [ -f yarn.lock ]; then
-    require_tool yarn
-    case "$(yarn --version)" in 1.*) yarn install --frozen-lockfile ;; *) yarn install --immutable ;; esac
-  elif [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then require_tool npm; npm ci
-  elif [ -f bun.lock ] || [ -f bun.lockb ]; then require_tool bun; bun install --frozen-lockfile
-  else require_tool npm; npm install; fi
-elif [ -f Cargo.toml ]; then require_tool cargo; cargo build --locked
-elif [ -f go.mod ]; then require_tool go; go mod download
+  ensure_python_env
+  # Parse metadata without executing repository code. Reject ambiguous lock families.
+  SELECTION="$("$BOOTSTRAP_PYTHON" "$SCRIPT_DIR/lib/project_metadata.py")"
+  IFS='|' read -r manager version locked <<< "$SELECTION"
+  prepare_build_tools
+  case "$manager" in
+    pnpm|yarn)
+      prepare_node_manager "$manager" "$version"
+      if [ "$manager" = pnpm ]; then
+        if [ "$locked" = yes ]; then "${MANAGER[@]}" install --frozen-lockfile; else "${MANAGER[@]}" install; fi
+      elif [ "$locked" = no ]; then "${MANAGER[@]}" install
+      else
+        case "$("${MANAGER[@]}" --version)" in 1.*) "${MANAGER[@]}" install --frozen-lockfile ;; *) "${MANAGER[@]}" install --immutable ;; esac
+      fi ;;
+    npm)
+      if [ -n "$version" ]; then prepare_node_manager npm "$version"; else require_tool npm; MANAGER=(npm); fi
+      if [ "$locked" = yes ]; then "${MANAGER[@]}" ci; else "${MANAGER[@]}" install; fi ;;
+    bun)
+      require_tool bun
+      if [ -n "$version" ] && [ "$(bun --version)" != "${version%%+*}" ]; then echo 'Bun 版本与 packageManager 不符，请先准备请求的版本' >&2; exit 1; fi
+      if [ "$locked" = yes ]; then bun install --frozen-lockfile; else bun install; fi ;;
+  esac
+elif [ -f Cargo.toml ]; then require_tool cargo; prepare_build_tools; cargo build --locked
+elif [ -f go.mod ]; then require_tool go; prepare_build_tools; go mod download
 else echo '未识别项目依赖清单；已克隆，依赖阶段跳过'; fi
 if [ -n "$ENV_KEYS" ]; then
   [ ! -L .env ] || { echo ".env 是软链，拒绝写入" >&2; exit 1; }

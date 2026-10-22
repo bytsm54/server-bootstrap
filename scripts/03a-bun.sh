@@ -26,7 +26,7 @@ if [ ! -x "$HOME/.bun/bin/bun" ]; then
 fi
 "$HOME/.bun/bin/bun" --version
 ensure_python_env
-for rc in .profile .bashrc .zshrc; do
+for rc in .profile .bashrc .zshrc .zshenv; do
   cat <<'EOF' | "$BOOTSTRAP_PYTHON" "$SCRIPT_DIR/lib/managed_file.py" "$HOME/$rc" bun-path
 export BUN_INSTALL="$HOME/.bun"
 case ":$PATH:" in *":$BUN_INSTALL/bin:"*) ;; *) export PATH="$PATH:$BUN_INSTALL/bin" ;; esac

@@ -41,7 +41,7 @@ bash scripts/lib/with-env.sh -- node --version
 bash scripts/lib/with-env.sh -- bun --version
 ```
 
-包装器只加载现有环境并调整进程 PATH，不删除软链或工具。nvm 是 Shell 函数；当前交互 Shell 可执行 `. "$HOME/.nvm/nvm.sh"` 加载。Node 和 Bun 默认不安装，先确认是否选择了对应选项。
+Bun 阶段会在 `.zshenv` 中写入有界 PATH 块，可用 `zsh -lc 'bun --version'` 检查；只安装了旧版配置时重跑 Bun 阶段即可补齐。Node 交互配置会加载 nvm 补全。包装器只加载现有环境并调整进程 PATH，不删除软链或工具。nvm 是 Shell 函数；当前交互 Shell 可执行 `. "$HOME/.nvm/nvm.sh"` 加载。Node 和 Bun 默认不安装，先确认是否选择了对应选项。
 
 ## Node 镜像或版本校验失败
 
@@ -68,7 +68,8 @@ zsh + oh-my-zsh + powerlevel10k 默认安装，`--install-zsh no` 才跳过。�
 
 - origin 不匹配：核对传入仓库地址和目标目录，必要时选择另一目录。
 - 存在本地改动：先由用户处理改动；脚本不自动 stash、reset、pull 或切换分支。
-- 缺少包管理器：按锁文件要求准备相应工具，再重跑；不要通过更换包管理器绕过锁文件。
+- 缺少包管理器：项目阶段会按需在用户目录准备 uv/Corepack，检查网络、npm 源和目录权限；Node/Bun 仍需按用户选择准备。检查 `packageManager` 版本与锁文件是否一致，不通过换管理器绕过锁文件。
+- 编译失败：项目阶段按需安装 `build-essential` 和 Python 开发头文件；具体业务依赖仍以安装日志为准，脚本不自动部署业务服务。
 - Python 依赖失败：检查项目 `.venv` 和安装日志；不向系统 Python 安装依赖。
 - `.env` 已存在：内容保持不变。若被 Git 跟踪或是软链，先处理对应状态再填写凭据。
 
@@ -128,10 +129,14 @@ sudo fail2ban-client -t
 sudo systemctl status fail2ban
 sudo journalctl -u fail2ban -n 50
 sudo fail2ban-client status sshd
-sudo fail2ban-client get sshd action iptables-multiport port
+sudo fail2ban-client get sshd actions
+# 使用上一步列出的动作名：
+sudo fail2ban-client get sshd action <action> port
 ```
 
-阶段安装 `fail2ban`、`python3-systemd` 和 `iptables`，使用 systemd journal 作为日志来源；不要求 `/var/log/auth.log` 存在。托管配置位于 `/etc/fail2ban/jail.d/99-server-bootstrap.local`。检查是否有其他配置覆盖该 jail；运行中的 action 端口必须与实际 SSH 端口一致。
+阶段安装 `fail2ban`、`python3-systemd` 及所选动作所需的防火墙工具（如 `iptables` 或 `nftables`），使用 systemd journal 作为日志来源；不要求 `/var/log/auth.log` 存在。托管配置位于 `/etc/fail2ban/jail.d/99-server-bootstrap.local`。继承系统或用户的 `action/banaction`，不会强制改为 iptables。验收同时检查动作集合、封禁命令、jail 参数及实际 SSH 端口；无法判定自定义动作的端口保护时报告失败，保留原配置供排查。配置及运行状态一致时不重启 jail；确需变更时重建 sshd jail，以兼容 fail2ban 1.1 的动作切换。
+
+旧版带本项目标记的 `sshd.local` 会迁移托管键并保留用户 action、ignoreip 等选项；无标记的文件保持原样。SSH 旧 socket `override.conf` 也只迁移带标记的监听设置。迁移失败恢复备份，手工设置与目标冲突时不要直接删除用户文件。
 
 ## 验收显示未验证或返回非零
 

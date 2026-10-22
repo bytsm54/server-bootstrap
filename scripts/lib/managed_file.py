@@ -32,8 +32,8 @@ def update(path, key, body, before=None):
     for index in range(len(lines) - 1, -1, -1):
         if lines[index].startswith(f"# server-bootstrap:{key} (managed by "):
             count = 1
-            for pattern in legacy.get(key, []):
-                if index + count < len(lines) and re.fullmatch(pattern, lines[index + count].rstrip('\n')):
+            for legacy_pattern in legacy.get(key, []):
+                if index + count < len(lines) and re.fullmatch(legacy_pattern, lines[index + count].rstrip('\n')):
                     count += 1
                 else:
                     break

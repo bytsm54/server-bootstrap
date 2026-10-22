@@ -2,7 +2,7 @@
 
 **在 AI Agent 会话中执行的 Ubuntu 服务器初始化 Skill。** 可由 Codex、Claude Code 等支持 Skill 的 Agent 加载：用户提出初始化需求，Agent 检查服务器、收集参数、调用阶段脚本完成配置、处理失败并验收。
 
-覆盖基础工具、主机名、时区、Git 身份、SSH 加固和 fail2ban；Node、Bun、zsh 及项目准备按需启用。`SKILL.md` 是 Agent 的工作入口，`scripts/` 是它使用的执行工具。
+覆盖基础工具、主机名、时区、Git 身份、zsh + oh-my-zsh + powerlevel10k、SSH 加固和 fail2ban；Node、Bun 及项目准备按需启用。`SKILL.md` 是 Agent 的工作入口，`scripts/` 是它使用的执行工具。
 
 用户提前完成目标服务器连接和本 Skill 的加载。Agent 可以在服务器上运行，也可以通过会话已有的远程执行通道操作服务器。本项目不负责 AI Agent 的安装、登录或配置，不保存服务器地址、私钥路径和连接记录，不安装其他 Skills。仅支持运行 systemd 的 Ubuntu，不自动整机升级、重启或安装业务服务。
 
@@ -29,7 +29,7 @@ Agent 会按 [SKILL.md](SKILL.md) 完成以下工作：
 
 ## 对话中可选择的配置
 
-**主机名留空保持现状；SSH 端口默认 `22022`，可自定义或选择保持现状。SSH 加固和 fail2ban 默认开启。** 下表同时列出对应脚本参数，供 Agent 调用或独立运行时使用；在对话中直接描述选择即可。
+**主机名留空保持现状；SSH 端口默认 `22022`，可自定义或选择保持现状。zsh 环境、SSH 加固和 fail2ban 默认开启。** 下表同时列出对应脚本参数，供 Agent 调用或独立运行时使用；在对话中直接描述选择即可。
 
 | 参数 | 默认行为 |
 |---|---|
@@ -47,11 +47,13 @@ Agent 会按 [SKILL.md](SKILL.md) 完成以下工作：
 | `--node-version` | `lts`，仅安装 Node 时生效 |
 | `--npm-registry` | `china`，可选 `official` |
 | `--install-bun` | `no`，可独立于 Node 安装 |
-| `--install-zsh` | `no` |
-| `--zsh-theme` | `robbyrussell`，仅安装 zsh 时生效 |
+| `--install-zsh` | `yes`，安装 zsh + oh-my-zsh，将当前用户的默认 Shell 改为 zsh；传 `no` 跳过 |
+| `--zsh-theme` | `powerlevel10k/powerlevel10k`，仅安装 zsh 时生效 |
 | `--repo` | 空，不克隆项目、不安装项目依赖 |
 | `--project-dir` | 提供仓库后默认为 `~/<仓库名>` |
 | `--env-keys` | 空；可传逗号分隔的环境变量名，只创建缺失的 `.env` 占位文件 |
+
+默认 Shell 的切换在新登录会话中生效；已有会话保持原 Shell。powerlevel10k 首次交互登录可能显示外观配置向导，也可在 zsh 中运行 `p10k configure` 调整。验收会检查 oh-my-zsh 和所选主题是否实际加载。
 
 ## SSH 修改流程
 
@@ -119,7 +121,7 @@ bash ~/server-bootstrap/scripts/server-init.sh \
 | `scripts/01-preflight.sh` | Ubuntu、systemd 与权限检查 |
 | `scripts/02-base-deps.sh` | 按需安装基础包并建立专用 venv |
 | `scripts/02a-system.sh` | 主机名、时区 |
-| `scripts/02b-zsh.sh` | 可选 zsh、主题及 Shell 配置 |
+| `scripts/02b-zsh.sh` | 默认安装 zsh、oh-my-zsh、powerlevel10k，设置当前用户默认 Shell |
 | `scripts/03-node.sh` / `scripts/03a-bun.sh` | 可选用户态运行环境 |
 | `scripts/05-git-identity.sh` | Git 全局身份 |
 | `scripts/06-project.sh` | 可选项目与依赖准备 |

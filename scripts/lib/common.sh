@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Shared defaults and validation. Sourcing this file does not change the host.
 DEFAULT_SSH_PORT=22022
+DEFAULT_ZSH_THEME=powerlevel10k/powerlevel10k
 
 init_privilege() {
   SUDO=(env)
@@ -27,7 +28,7 @@ valid_timezone() {
 
 config_defaults() {
   HOSTNAME_VALUE=''; TIMEZONE=Asia/Shanghai
-  INSTALL_ZSH=no; ZSH_THEME=robbyrussell
+  INSTALL_ZSH=yes; ZSH_THEME="$DEFAULT_ZSH_THEME"
   INSTALL_NODE=no; NODE_VERSION=lts; NPM_REGISTRY=china; INSTALL_BUN=no
   GIT_NAME="$(git config --global user.name 2>/dev/null || true)"
   GIT_EMAIL="$(git config --global user.email 2>/dev/null || true)"

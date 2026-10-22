@@ -1,6 +1,6 @@
 ---
 name: server-bootstrap
-description: 由 AI Agent 通过对话完成 Ubuntu 服务器初始化：探测现状、收集参数、执行基础配置、SSH 加固及 fail2ban，并处理失败与验收。用户要求“执行 server-bootstrap”“初始化服务器”“新机配置”或修复相应阶段时使用；支持可选 Node、Bun、zsh 和项目准备，不负责安装 AI Agent 或部署业务服务。
+description: 由 AI Agent 通过对话完成 Ubuntu 服务器初始化：探测现状、收集参数、执行基础配置、zsh 环境、SSH 加固及 fail2ban，并处理失败与验收。用户要求“执行 server-bootstrap”“初始化服务器”“新机配置”或修复相应阶段时使用；支持可选 Node、Bun 和项目准备，不负责安装 AI Agent 或部署业务服务。
 ---
 
 # Ubuntu 服务器初始化 Skill
@@ -28,12 +28,13 @@ description: 由 AI Agent 通过对话完成 Ubuntu 服务器初始化：探测�
 | Git 身份 | 复用已有 `user.name` / `user.email`，仅缺失时询问 |
 | SSH 加固 | 默认启用；验证公钥登录后关闭密码、键盘交互和 root 登录 |
 | fail2ban | 默认启用，跟随实际 SSH 端口 |
-| Node、Bun、zsh | 可分别选择，默认不安装 |
+| zsh | 默认安装 zsh + oh-my-zsh + powerlevel10k，将当前管理账号的默认 Shell 改为 zsh；可明确跳过 |
+| Node、Bun | 可分别选择，默认不安装 |
 | 项目与依赖 | 默认不执行；选择时再收集仓库、目录和环境变量名称 |
 
 开场可这样表达，按已知信息省略问题：
 
-> 我会保留现有主机名，SSH 端口默认设为 22022，时区默认设为 Asia/Shanghai，复用已有 Git 身份，并启用 SSH 加固与 fail2ban。需要调整这些参数或保留当前 SSH 端口吗？Node、Bun、zsh 和项目准备默认跳过，需要的可以一起告诉我。
+> 我会保留现有主机名，SSH 端口默认设为 22022，时区默认设为 Asia/Shanghai，复用已有 Git 身份，安装 zsh + oh-my-zsh + powerlevel10k 并将当前账号的默认 Shell 改为 zsh，同时启用 SSH 加固与 fail2ban。需要调整这些参数或保留当前 SSH 端口吗？Node、Bun 和项目准备默认跳过，需要的可以一起告诉我。
 
 仅有 root 时，引导用户确定普通管理账号并创建、加入 sudo 组、配置公钥；已有授权和工具能力时由你执行这些准备操作。先取得该账号的新连接与 sudo 验证结果，再关闭 root 登录。用户态工具和 Git 配置应落到选定管理账号的 HOME 下，不要整套套用 sudo 写入 root 的 HOME。
 
@@ -47,7 +48,7 @@ description: 由 AI Agent 通过对话完成 Ubuntu 服务器初始化：探测�
 |---|---|
 | 基础依赖 | `bash scripts/02-base-deps.sh --with-ssh yes`；SSH 和 fail2ban 都跳过时传 `no` |
 | 主机名、时区 | `bash scripts/02a-system.sh --hostname "$hostname" --timezone "$timezone"`；保留现状传空字符串 |
-| 可选 zsh | `bash scripts/02b-zsh.sh --theme "$zsh_theme"` |
+| zsh（默认启用） | `bash scripts/02b-zsh.sh --theme "$zsh_theme"`；默认主题为 `powerlevel10k/powerlevel10k`，同时设为当前账号的默认 Shell |
 | 可选 Node | `bash scripts/03-node.sh --node-version "$node_version" --npm-registry "$npm_registry" --install-bun no` |
 | 可选 Bun | `bash scripts/03a-bun.sh` |
 | Git 身份 | `bash scripts/05-git-identity.sh --name "$git_name" --email "$git_email"` |
@@ -93,5 +94,7 @@ description: 由 AI Agent 通过对话完成 Ubuntu 服务器初始化：探测�
 由你运行 `scripts/verify-server.sh`（或 `server-init.sh --stage verify`），附带本次实际使用的主机名、时区、SSH 参数、Git 身份、可选组件开关和项目参数。参数名可通过 `server-init.sh --help` 查询。不能遗漏可选开关而将本应完成的项目算作跳过。
 
 主机名或 SSH 端口选择保持现状时，额外读取最终实际值，与开场基线比较；验收脚本对空参数的“跳过”不能代替这项比较。
+
+安装 zsh 时，核验当前账号的登录 Shell、oh-my-zsh 和目标主题的实际加载，并通过新登录会话确认生效。已有 Shell 进程不会自动切换。powerlevel10k 首次交互登录可能显示外观配置向导，不能把该向导误判为安装失败。
 
 核对退出码和各项结果，继续处理已授权范围内的失败；确需用户补充时指出具体缺口。最后报告成功、用户跳过、失败和未验证的项目。只有所有必需阶段完成并通过验收，才能宣称初始化完成；项目依赖准备不代表业务已部署或通过业务测试。

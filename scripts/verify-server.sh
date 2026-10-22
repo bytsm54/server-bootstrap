@@ -43,6 +43,15 @@ if [ "$INSTALL_ZSH" = yes ]; then
   check zsh zsh --version
   check 'zsh 配置语法' zsh -n "$HOME/.zshrc"
   check '默认 zsh' test "$(getent passwd "$(id -un)" | cut -d: -f7)" = "$(command -v zsh)"
+  # Load the actual interactive configuration without update/configuration prompts.
+  check "oh-my-zsh 与主题加载 ($ZSH_THEME)" env DISABLE_AUTO_UPDATE=true \
+    POWERLEVEL9K_DISABLE_CONFIGURATION_WIZARD=true zsh -ic '
+      [[ -r "$ZSH/oh-my-zsh.sh" && "$ZSH_THEME" == "$1" ]] || exit 1
+      (( $+functions[omz] )) || exit 1
+      if [[ "$1" == powerlevel10k/* ]]; then
+        (( $+functions[p10k] )) || exit 1
+      fi
+    ' zsh "$ZSH_THEME"
 else skip zsh; fi
 if [ -n "$PROJECT_REPO" ]; then
   PROJECT_DIR="${PROJECT_DIR:-$HOME/$(basename "$PROJECT_REPO" .git)}"

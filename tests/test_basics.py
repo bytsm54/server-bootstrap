@@ -88,7 +88,7 @@ class CommonTests(IsolatedCase):
         result = self.good(self.common('config_defaults; printf "%s|%s|%s|%s|%s|%s|%s" '
                                       '"$HOSTNAME_VALUE" "$SSH_PORT" "$TIMEZONE" '
                                       '"$INSTALL_NODE" "$INSTALL_BUN" "$INSTALL_ZSH" "$PROJECT_REPO"'))
-        self.assertEqual(result.stdout, '|22022|Asia/Shanghai|no|no|no|')
+        self.assertEqual(result.stdout, '|22022|Asia/Shanghai|no|no|yes|')
 
     def test_port_bounds_and_decimal_leading_zero(self):
         for value in ('1', '22', '65535', '00022'):
@@ -271,7 +271,30 @@ class VerifyTests(IsolatedCase):
         return path
 
     def verify(self, path, *args):
-        return self.run_cmd(BASH, path, '--harden-ssh', 'no', '--enable-fail2ban', 'no', *args)
+        return self.run_cmd(BASH, path, '--harden-ssh', 'no', '--enable-fail2ban', 'no',
+                            '--install-zsh', 'no', *args)
+
+    @unittest.skipUnless(shutil.which('zsh', path='/usr/bin:/bin'), 'requires zsh')
+    def test_zsh_verification_requires_theme_loading_and_login_shell(self):
+        path = self.verifier()
+        zsh = shutil.which('zsh', path=self.env['PATH'])
+        self.stub('getent', f'printf "tester:x:1000:1000::%s:%s\\n" "$HOME" "${{LOGIN_SHELL:-{zsh}}}"')
+        omz = self.home / '.oh-my-zsh'
+        omz.mkdir()
+        loader = omz / 'oh-my-zsh.sh'
+        loader.write_text('function omz() { :; }\nfunction p10k() { :; }\n')
+        rc = self.home / '.zshrc'
+        rc.write_text('ZSH="$HOME/.oh-my-zsh"\nZSH_THEME=powerlevel10k/powerlevel10k\nsource "$ZSH/oh-my-zsh.sh"\n')
+        self.good(self.verify(path, '--install-zsh', 'yes'))
+        loader.write_text('function omz() { :; }\n')
+        result = self.verify(path, '--install-zsh', 'yes')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('[失败] oh-my-zsh 与主题加载', result.stdout)
+        loader.write_text('function omz() { :; }\nfunction p10k() { :; }\n')
+        self.env['LOGIN_SHELL'] = '/bin/bash'
+        result = self.verify(path, '--install-zsh', 'yes')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('[失败] 默认 zsh', result.stdout)
 
     def test_missing_required_component_fails_and_optional_absence_skips(self):
         path = self.verifier()

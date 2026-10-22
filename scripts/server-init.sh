@@ -12,8 +12,8 @@ Usage: server-init.sh [options]
   --node-version <lts|version>      默认 lts
   --npm-registry china|official     默认 china
   --install-bun yes|no              默认 no（可独立安装）
-  --install-zsh yes|no              默认 no
-  --zsh-theme <theme>               默认 robbyrussell
+  --install-zsh yes|no              默认 yes，安装 oh-my-zsh 并设为当前用户默认 Shell
+  --zsh-theme <theme>               默认 powerlevel10k/powerlevel10k
   --git-name <name> --git-email <email>  默认复用已有全局身份
   --harden-ssh yes|no               默认 yes
   --ssh-port <1-65535>              默认 22022；空字符串保留当前端口
@@ -58,7 +58,8 @@ if [ "$ASSUME_YES" != yes ] && [ "$STAGE" != verify ]; then
   [ "$TIMEZONE" != keep ] || TIMEZONE=''
   prompt_option --install-node INSTALL_NODE '安装 Node (yes/no)'
   prompt_option --install-bun INSTALL_BUN '安装 Bun (yes/no)'
-  prompt_option --install-zsh INSTALL_ZSH '安装 zsh (yes/no)'
+  prompt_option --install-zsh INSTALL_ZSH '安装 zsh + oh-my-zsh 并设为默认 Shell (yes/no)'
+  if [ "$INSTALL_ZSH" = yes ]; then prompt_option --zsh-theme ZSH_THEME 'zsh 主题'; fi
   prompt_option --git-name GIT_NAME 'Git user.name'
   prompt_option --git-email GIT_EMAIL 'Git user.email'
   prompt_option --harden-ssh HARDEN_SSH 'SSH 加固 (yes/no)'

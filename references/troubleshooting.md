@@ -58,6 +58,8 @@ bash scripts/03-node.sh --node-version lts --npm-registry official
 
 ## Shell 配置管理块损坏或文件是软链
 
+zsh + oh-my-zsh + powerlevel10k 默认安装，`--install-zsh no` 才跳过。用 `getent passwd "$(id -un)"` 核对账号的登录 Shell，并在新 SSH 会话中检查；已有 Bash 进程和它的 `$SHELL` 环境变量不能证明切换失败。首次交互登录出现 powerlevel10k 外观向导时按需选择，或之后在 zsh 中运行 `p10k configure`。完整验收还会实际加载 oh-my-zsh 和所选主题，只有 zsh 命令存在不算配置完成。
+
 管理块使用明确的 BEGIN/END 标记。标记不配对、重复或文件是软链时停止，避免覆盖未知内容。检查原文件和旁边的 `.server-bootstrap.bak`，保留用户内容后修复管理块，再重跑对应阶段。
 
 已有 zsh 配置使用自定义的 oh-my-zsh 加载方式时，可能无法找到插入主题设置的锚点。先检查配置如何加载主题，不要把整份 `.zshrc` 换成模板。语法可以通过 `zsh -n "$HOME/.zshrc"` 检查。

@@ -3,7 +3,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/common.sh"
 . "$SCRIPT_DIR/lib/python-env.sh"
-THEME=robbyrussell
+THEME="$DEFAULT_ZSH_THEME"
 DEFAULT_SHELL=yes
 while [ "$#" -gt 0 ]; do
   [ "$#" -ge 2 ] || exit 2
@@ -48,6 +48,9 @@ cat <<'EOF' | "$BOOTSTRAP_PYTHON" "$SCRIPT_DIR/lib/managed_file.py" "$RC" zsh-ex
 source /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh
 source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
 EOF
+cat <<'EOF' | "$BOOTSTRAP_PYTHON" "$SCRIPT_DIR/lib/managed_file.py" "$RC" localbin-path
+case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$PATH:$HOME/.local/bin" ;; esac
+EOF
 zsh -n "$RC"
 if [ "$DEFAULT_SHELL" = yes ]; then
   target="$(command -v zsh)"
@@ -55,4 +58,5 @@ if [ "$DEFAULT_SHELL" = yes ]; then
     "${SUDO[@]}" chsh -s "$target" "$(id -un)"
   fi
 fi
-echo 'zsh 配置完成；原有用户配置已保留'
+echo "zsh + oh-my-zsh 配置完成，主题: $THEME；原有用户配置已保留"
+[ "$DEFAULT_SHELL" != yes ] || echo '当前用户的默认 Shell 已设为 zsh；新登录会话生效'

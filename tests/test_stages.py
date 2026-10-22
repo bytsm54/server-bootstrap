@@ -28,9 +28,24 @@ if [ "${1:-}" = deadline ]; then echo "$DEADLINE"; fi''',directory=self.phases)
     def test_prepare_skips_security_and_optional_runtimes(self):
         self.good(self.init('--stage','prepare'))
         trace=self.trace()
-        for phase in ('08-ssh','09-fail','03-node','03a-bun','02b-zsh'): self.assertNotIn(phase,trace)
+        for phase in ('08-ssh','09-fail','03-node','03a-bun'): self.assertNotIn(phase,trace)
+        self.assertIn('02b-zsh.sh <--theme> <powerlevel10k/powerlevel10k>',trace)
+        self.assertIn('<--install-zsh> <yes> <--zsh-theme> <powerlevel10k/powerlevel10k>',trace)
         self.assertIn('02a-system.sh <--hostname> <>',trace)
         self.assertIn('<--harden-ssh> <no>',trace)
+    def test_explicit_zsh_skip_does_not_run_phase(self):
+        self.good(self.init('--stage','prepare','--install-zsh','no'))
+        self.assertNotIn('02b-zsh',self.trace())
+        self.assertIn('<--install-zsh> <no>',self.trace())
+    def test_interactive_zsh_defaults_and_theme_override(self):
+        for theme in ('', 'robbyrussell'):
+            with self.subTest(theme=theme):
+                (self.base/'trace').write_text('')
+                self.good(self.run_cmd(BASH,SCRIPTS/'server-init.sh','--stage','prepare',
+                    '--hostname','','--timezone','','--install-node','no','--install-bun','no',
+                    '--git-name','Tester','--git-email','test@example.invalid',
+                    '--harden-ssh','no','--enable-fail2ban','no',input='\n'+theme+'\nyes\n'))
+                self.assertIn(f'02b-zsh.sh <--theme> <{theme or "powerlevel10k/powerlevel10k"}>',self.trace())
     def test_new_connection_confirmation_and_actual_port_handoff(self):
         for args,port in [((), '22022'), (('--ssh-port','4444'), '4444'), (('--ssh-port',''), '')]:
             with self.subTest(args=args):
